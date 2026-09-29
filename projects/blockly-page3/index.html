@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>广阳岛 Blockly 闯关</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css?v=20260928-start-multiselect-001">
+  <link rel="stylesheet" href="./debug-run.css?v=20260918-penalty-log-001">
+  <script src="./vendor/blockly/blockly_compressed.js"></script>
+  <script src="./vendor/blockly/blocks_compressed.js"></script>
+  <script src="./vendor/blockly/javascript_compressed.js"></script>
+  <script src="./vendor/blockly/msg/zh-hans.js"></script>
+  <script src="./vendor/three/three.min.js"></script>
+  <script src="./vendor/lucide/lucide.min.js"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark"><i data-lucide="bot"></i></div>
+        <div>
+          <p class="eyebrow">广阳岛</p>
+          <h1>Blockly 闯关</h1>
+        </div>
+      </div>
+      <div class="topbar-actions" aria-label="运行控制">
+        <select id="targetSelect"><option value="real">真实小车</option><option value="sim">3D 模拟器</option></select>
+        <label class="robot-connection" id="robotConnection">
+          <span class="protocol-toggle" id="protocolToggle"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button></span>
+          <input id="robotBaseUrl" value="192.168.4.1"><button id="applyRobotIpButton" type="button">确认</button>
+          <label class="robot-speed-field" title="真实小车前进/后退速度（0-50）"><span>直行</span><input id="realMoveSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
+          <label class="robot-speed-field" title="真实小车转弯速度（0-50）"><span>转弯</span><input id="realTurnSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
+        </label>
+        <button id="debugSpeedButton" type="button" title="切换调试速度；只改变等待速度，不改变模拟判定"><i data-lucide="fast-forward"></i><span>调试 1×</span></button>
+        <button id="runButton" class="primary" type="button" title="调试运行不会写入比赛记录"><i data-lucide="play"></i><span>调试运行</span></button>
+        <button id="pauseButton" type="button" disabled aria-label="暂停调试" title="暂停调试"><i data-lucide="pause"></i><span>暂停</span></button>
+        <button id="stepButton" type="button" disabled aria-label="单步调试" title="执行当前积木，并在下一块积木前暂停"><i data-lucide="step-forward"></i><span>单步</span></button>
+        <button id="stopButton" type="button" disabled aria-label="停止运行" title="停止运行"><i data-lucide="square"></i><span>停止</span></button>
+        <button id="scoreRunButton" type="button" title="固定 1× 从起点运行，并保存本次执行时间"><i data-lucide="timer"></i><span>计时运行</span></button>
+        <button id="resetButton" type="button" aria-label="重置任务" title="重置任务"><i data-lucide="rotate-ccw"></i><span>重置</span></button>
+        <div class="status-pill"><span class="status-indicator"></span><span id="statusText">等待编程</span></div>
+        <div class="account-actions">
+          <a id="platformReturnButton" class="platform-return-button" href="/portal.html" aria-label="返回统一平台" title="返回统一平台"><i data-lucide="layout-grid"></i><span>返回统一平台</span></a>
+          <span id="accountName" class="account-name">请先登录</span>
+          <button id="teamInviteButton" type="button" disabled><i data-lucide="users"></i><span>队伍邀请码</span></button>
+          <button id="adminButton" type="button" hidden><i data-lucide="settings"></i><span>管理后台</span></button>
+          <button id="loginButton" type="button"><i data-lucide="log-in"></i><span>登录</span></button>
+          <button id="logoutButton" type="button" hidden><i data-lucide="log-out"></i><span>退出</span></button>
+        </div>
+      </div>
+    </header>
+
+    <section class="workspace-grid">
+      <div class="blockly-panel">
+        <div class="blockly-editor-heading">
+          <div>
+            <span class="section-kicker">程序积木</span>
+            <strong>自主规划控制程序</strong>
+            <small>组合移动、循环与摄像头感知等积木完成任务。</small>
+          </div>
+          <div class="blockly-editor-actions">
+            <button id="saveSnapshotButton" class="snapshot-save-button" type="button" title="保存当前积木为快照（Ctrl+S）"><i data-lucide="camera"></i><span>保存快照</span></button>
+            <button id="snapshotHistoryButton" class="snapshot-history-button" type="button" title="查看已保存的积木快照"><i data-lucide="history"></i><span>历史</span></button>
+            <div class="workspace-badge" id="workspaceSaveStatus" aria-live="polite"><i data-lucide="cloud"></i><span>自动保存已开启</span></div>
+          </div>
+        </div>
+        <div class="blockly-workspace-tab">
+          <i data-lucide="puzzle"></i><strong>主程序</strong><small>积木</small>
+        </div>
+        <div class="blockly-stage">
+          <div id="blocklyDiv" aria-label="Blockly 工作区"></div>
+          <div class="blockly-controls" aria-label="积木工作区工具">
+            <button id="centerBlocksButton" title="定位到积木"><i data-lucide="locate-fixed"></i></button>
+            <button id="zoomInBlocksButton" title="放大积木"><i data-lucide="plus"></i></button>
+            <button id="zoomOutBlocksButton" title="缩小积木"><i data-lucide="minus"></i></button>
+            <button id="disableBlocksButton" title="禁用/启用选中的积木"><i data-lucide="ban"></i></button>
+            <button id="runSelectedBlocksButton" title="运行选中的积木"><i data-lucide="play"></i></button>
+            <button id="deleteBlocksButton" title="删除选中的积木"><i data-lucide="trash-2"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="splitter" id="workspaceSplitter" role="separator" aria-orientation="vertical" aria-label="调整 Blockly 和 3D 模拟器宽度"></div>
+
+      <aside class="side-panel">
+        <section class="code-panel is-code-collapsed" id="codePanel">
+          <div class="panel-title">
+            <span><i data-lucide="activity"></i>运行状态</span>
+            <div class="tool-row">
+              <button id="toggleStatePanelButton" type="button" aria-expanded="true" aria-controls="statePanelContent" title="收起运行状态"><i data-lucide="chevron-up" aria-hidden="true"></i><span>收起状态</span></button>
+              <button id="toggleCodeButton" title="展开或折叠代码"><i data-lucide="chevron-down"></i><span>展开代码</span></button>
+              <button id="copyButton" title="复制代码"><i data-lucide="copy"></i><span>复制</span></button>
+            </div>
+          </div>
+          <div class="state-panel-content" id="statePanelContent">
+          <pre id="codeOutput">// 拖动积木后，这里会显示 JavaScript 代码</pre>
+          <div class="robot-state">
+            <div class="state-title">小车状态</div>
+            <div class="state-grid">
+              <div><span>位置</span><strong id="poseText">--</strong></div>
+              <div><span>朝向</span><strong id="headingText">--</strong></div>
+              <div><span>夹爪</span><strong id="gripperText">--</strong></div>
+              <div><span>前方</span><strong id="frontText">--</strong></div>
+            </div>
+            <ul id="actionLog" class="action-log" aria-label="小车运行解释"></ul>
+          </div>
+          </div>
+        </section>
+
+        <div class="vertical-splitter" id="stateSceneSplitter" role="separator" aria-orientation="horizontal" aria-label="调整小车状态和 3D 模拟器高度"></div>
+
+        <section class="scene-panel">
+          <div class="panel-title scene-title">
+            <span><i data-lucide="box"></i>3D 模拟器</span>
+            <div class="tool-row">
+              <button data-view="iso"><i data-lucide="camera"></i><span>斜视</span></button>
+              <button data-view="top"><i data-lucide="scan"></i><span>俯视</span></button>
+              <button data-view="follow"><i data-lucide="navigation"></i><span>跟随</span></button>
+              <button id="toggleSceneTools" class="primary-hidden" aria-hidden="true" tabindex="-1"><i data-lucide="sliders-horizontal"></i><span>工具</span></button>
+            </div>
+          </div>
+          <div class="panel-tools is-collapsed primary-hidden" id="sceneTools" aria-hidden="true">
+            <div class="tool-row">
+              <select id="mapStyleSelect" aria-label="场地外观">
+                <option value="basic">基础网格外观</option>
+                <option value="competition">比赛场地外观</option>
+              </select>
+              <button data-place="block"><i data-lucide="box"></i><span>障碍</span></button>
+              <button data-place="package" title="可连续放置；点击同一格可向上堆叠"><i data-lucide="package"></i><span>包裹</span></button>
+              <button data-place="goal"><i data-lucide="map-pin"></i><span>终点</span></button>
+              <button data-place="delete"><i data-lucide="eraser"></i><span>删除</span></button>
+              <div class="saved-map-menu" id="savedMapMenu">
+                <button id="savedMapButton" class="saved-map-trigger" type="button">
+                  <span id="savedMapButtonText">地图存档</span>
+                  <i data-lucide="chevron-down"></i>
+                </button>
+                <div id="savedMapDropdown" class="saved-map-dropdown" role="menu" aria-label="地图存档"></div>
+              </div>
+              <button id="saveMapButton"><i data-lucide="save"></i><span>保存</span></button>
+              <button id="clearSceneButton"><i data-lucide="trash-2"></i><span>清空</span></button>
+            </div>
+          </div>
+          <div id="simulator">
+            <canvas id="simCanvas"></canvas>
+            <div class="mission-card" id="missionCard">
+              <div class="mission-card-header">
+                <div class="mission-card-heading">
+                  <span class="mission-card-kicker">当前任务</span>
+                  <strong id="missionTitle">广阳岛综合任务1</strong>
+                </div>
+                <button class="mission-card-toggle" id="missionCardToggle" type="button" aria-expanded="true" aria-controls="missionCardBody" aria-label="收起当前任务" title="收起当前任务">
+                  <i data-lucide="chevron-up" aria-hidden="true"></i>
+                </button>
+              </div>
+              <div class="mission-card-body" id="missionCardBody" aria-hidden="false">
+                <span id="missionText" class="mission-card-text">按顺序经过 3 个蓝色途径点，再到达绿色终点。</span>
+                <div class="mission-progress" id="missionProgress" aria-live="polite">
+                  <div class="mission-progress-row"><span id="missionProgressLabel">任务进度</span><b id="missionProgressValue">0/1</b></div>
+                  <div class="mission-progress-track"><i id="missionProgressBar"></i></div>
+                  <small id="missionProgressHint">把包裹送到终点</small>
+                </div>
+              </div>
+            </div>
+            <section class="primary-score-hud" id="primaryScoreHud" aria-live="polite" aria-label="程序执行时间">
+              <header class="primary-score-header">
+                <div class="primary-score-heading">
+                  <span class="primary-score-kicker">计时排名</span>
+                  <strong>程序执行时间</strong>
+                </div>
+                <div class="primary-score-summary">
+                  <b id="primaryScoreValue">00:00.0</b>
+                  <small class="score-reference-note">用时越短<br>排名越高</small>
+                </div>
+              </header>
+            </section>
+            <div class="camera-view" id="cameraView">
+              <img id="cameraStream" alt="真实小车摄像头画面">
+              <div class="camera-placeholder" id="cameraPlaceholder">
+                <i data-lucide="video"></i>
+                <strong>真实小车摄像头</strong>
+                <span>连接小车 Wi-Fi 后切换到真实小车模式。</span>
+              </div>
+            </div>
+            <canvas id="laneFollowCanvas" class="lane-follow-canvas" width="320" height="240" hidden></canvas>
+            <div class="lane-follow-hud" id="laneFollowHud" aria-live="polite" aria-label="自动巡线信息" hidden>
+              <header class="lane-follow-hud-header">
+                <div class="lane-follow-hud-heading">
+                  <span class="lane-follow-kicker">自动巡线</span>
+                  <strong id="laneFollowPathState">未识别路径</strong>
+                </div>
+                <div class="lane-follow-hud-summary">
+                  <b id="laneFollowError">--</b>
+                  <small>偏差 px</small>
+                </div>
+              </header>
+              <div class="lane-follow-hud-grid">
+                <span><small>中心点</small><b id="laneFollowCenters">--</b></span>
+                <span><small>路口</small><b id="laneFollowCrossing">--</b></span>
+                <span><small>左轮</small><b id="laneFollowLeft">--</b></span>
+                <span><small>右轮</small><b id="laneFollowRight">--</b></span>
+              </div>
+            </div>
+            <div id="runtimeFeedback" class="runtime-feedback" data-tone="output" aria-live="polite" hidden>
+              <span id="runtimeFeedbackLabel">程序输出</span>
+              <strong id="runtimeFeedbackValue">--</strong>
+            </div>
+            <div class="sensor-card primary-hidden" aria-hidden="true">
+              <span>前方距离</span>
+              <strong id="distanceText">-- cm</strong>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <xml id="toolbox" style="display:none">
+    <category name="主函数" colour="#eab308">
+      <block type="robot_start"></block>
+    </category>
+    <category name="小车移动" colour="#1177cc">
+      <block type="robot_move_cm">
+        <field name="DIR">forward</field>
+        <value name="DISTANCE_CM">
+          <shadow type="math_number"><field name="NUM">50</field></shadow>
+        </value>
+      </block>
+      <block type="robot_move_cm">
+        <field name="DIR">backward</field>
+        <value name="DISTANCE_CM">
+          <shadow type="math_number"><field name="NUM">20</field></shadow>
+        </value>
+      </block>
+      <block type="robot_turn_left_90"></block>
+      <block type="robot_turn_right_90"></block>
+      <block type="robot_turn_left_angle">
+        <field name="DEGREES">45</field>
+      </block>
+      <block type="robot_turn_right_angle">
+        <field name="DEGREES">45</field>
+      </block>
+      <block type="robot_follow_line">
+        <value name="BASE"><shadow type="math_number"><field name="NUM">24</field></shadow></value>
+        <value name="KP"><shadow type="math_number"><field name="NUM">0.05</field></shadow></value>
+        <value name="MAX_CORRECTION"><shadow type="math_number"><field name="NUM">2</field></shadow></value>
+      </block>
+    </category>
+    <category name="物品操作" colour="#d97706">
+      <block type="robot_gripper"><field name="ACTION">grab</field></block>
+      <block type="robot_gripper"><field name="ACTION">release</field></block>
+    </category>
+    <category name="顺序与选择" colour="#8b5cf6">
+      <block type="robot_sequence"></block>
+      <block type="controls_if"></block>
+      <block type="controls_if"><mutation else="1"></mutation></block>
+      <block type="robot_if_obstacle"></block>
+    </category>
+    <category name="循环" colour="#5ba55b">
+      <block type="controls_repeat_ext">
+        <value name="TIMES">
+          <shadow type="math_number"><field name="NUM">4</field></shadow>
+        </value>
+      </block>
+      <block type="controls_whileUntil">
+        <field name="MODE">WHILE</field>
+        <value name="BOOL"><shadow type="logic_boolean"><field name="BOOL">TRUE</field></shadow></value>
+      </block>
+      <block type="controls_whileUntil">
+        <field name="MODE">UNTIL</field>
+        <value name="BOOL"><shadow type="logic_boolean"><field name="BOOL">FALSE</field></shadow></value>
+      </block>
+      <block type="controls_for">
+        <field name="VAR">i</field>
+        <value name="FROM"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+        <value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value>
+        <value name="BY"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+      </block>
+      <block type="controls_forEach"><field name="VAR">项目</field></block>
+      <block type="robot_forever"></block>
+      <block type="controls_flow_statements"><field name="FLOW">BREAK</field></block>
+      <block type="controls_flow_statements"><field name="FLOW">CONTINUE</field></block>
+    </category>
+    <category name="摄像头感知" colour="#c026d3">
+      <block type="robot_vision_sees"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_count"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_direction"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_distance"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_near"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_centered"><field name="TARGET">目标物</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_observe"><field name="TARGET">全部</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_detect"><field name="TARGET">全部</field><value name="CONFIDENCE"><shadow type="math_number"><field name="NUM">0.6</field></shadow></value></block>
+      <block type="robot_vision_approach"><field name="MODEL">tennis</field><value name="SPEED"><shadow type="math_number"><field name="NUM">30</field></shadow></value><value name="TURN_SPEED"><shadow type="math_number"><field name="NUM">30</field></shadow></value><value name="BOX_WIDTH"><shadow type="math_number"><field name="NUM">320</field></shadow></value></block>
+    </category>
+    <category name="数据与列表" colour="#7c3aed">
+      <block type="robot_data_get"><value name="KEY"><shadow type="text"><field name="TEXT">roadId</field></shadow></value></block>
+      <block type="robot_list_item"><value name="INDEX"><shadow type="math_number"><field name="NUM">1</field></shadow></value></block>
+      <block type="robot_data_length"></block>
+      <block type="robot_json_text"></block>
+      <block type="lists_create_with"><mutation items="0"></mutation></block>
+      <block type="lists_create_with"></block>
+      <block type="lists_length"></block>
+      <block type="lists_isEmpty"></block>
+      <block type="lists_getIndex"></block>
+      <block type="lists_setIndex"></block>
+    </category>
+    <category name="等待与输出" colour="#6a6f7a">
+      <block type="robot_wait">
+        <value name="SECONDS"><shadow type="math_number"><field name="NUM">1</field></shadow></value>
+      </block>
+      <block type="text_print">
+        <value name="TEXT"><shadow type="text"><field name="TEXT">你好，小车！</field></shadow></value>
+      </block>
+    </category>
+    <category name="数学与逻辑" colour="#5b67a5">
+      <block type="math_number"></block>
+      <block type="math_arithmetic"></block>
+      <block type="math_number_property"></block>
+      <block type="logic_boolean"></block>
+      <block type="logic_compare"></block>
+      <block type="logic_operation"></block>
+      <block type="logic_negate"></block>
+      <block type="logic_ternary"></block>
+      <block type="math_single"></block>
+      <block type="math_round"></block>
+      <block type="math_modulo"></block>
+      <block type="math_constrain"></block>
+    </category>
+    <category name="文本" colour="#a855f7">
+      <block type="text"></block>
+      <block type="text_join"></block>
+      <block type="text_length"></block>
+      <block type="text_isEmpty"></block>
+      <block type="text_indexOf"></block>
+      <block type="text_charAt"></block>
+    </category>
+    <category name="变量" custom="VARIABLE" colour="#a65c81"></category>
+    <category name="函数" custom="PROCEDURE" colour="#995ba5"></category>
+  </xml>
+
+  <dialog id="primaryTeamDialog" class="primary-team-dialog" aria-labelledby="primaryTeamDialogTitle">
+    <section class="primary-dialog-shell">
+      <header><h2 id="primaryTeamDialogTitle">队伍邀请码</h2><button id="closePrimaryTeamDialogButton" type="button" aria-label="关闭">×</button></header>
+      <p id="primaryTeamDialogText">将邀请码发给队友；他们注册时选择“加入已有队伍”即可使用。</p>
+      <output id="primaryTeamInviteCode" class="primary-team-code" aria-live="polite"></output>
+      <p id="primaryTeamCopyStatus" class="auth-message" aria-live="polite"></p>
+      <footer><button id="copyPrimaryTeamInviteButton" type="button">复制邀请码</button></footer>
+    </section>
+  </dialog>
+
+  <dialog id="snapshotDialog" class="snapshot-dialog" aria-labelledby="snapshotDialogTitle">
+    <section class="snapshot-dialog-shell">
+      <header>
+        <h2 id="snapshotDialogTitle">积木快照</h2>
+        <button id="closeSnapshotDialogButton" type="button" aria-label="关闭">×</button>
+      </header>
+      <div id="snapshotListView" class="snapshot-list-view">
+        <p class="snapshot-dialog-hint">快照保存在本浏览器，最多 20 条。恢复会替换当前任务的积木。</p>
+        <div id="snapshotList" class="snapshot-list"></div>
+        <footer><button id="snapshotNewButton" type="button" class="snapshot-save-button">保存当前快照</button></footer>
+      </div>
+      <div id="snapshotPreviewView" class="snapshot-preview-view" hidden>
+        <div class="snapshot-preview-bar">
+          <span id="snapshotViewerTitle" class="snapshot-preview-time"></span>
+          <div class="snapshot-viewer-actions">
+            <button id="snapshotViewerRestoreButton" type="button" class="snapshot-restore-button">恢复</button>
+            <button id="snapshotBackButton" type="button" class="snapshot-view-button">返回列表</button>
+          </div>
+        </div>
+        <div id="snapshotViewerCanvas" class="snapshot-viewer-canvas"></div>
+      </div>
+    </section>
+  </dialog>
+
+  <script src="./guangyang-scoring.js?v=20260827-002"></script>
+  <script src="./guangyang-map-config.js?v=20260827-001"></script>
+  <script src="./blockly-navigation-core.js?v=20260827-001"></script>
+  <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
+  <script src="./lane-follow.js?v=20260928-start-multiselect-001"></script>
+  <script src="./app.js?v=20260928-start-multiselect-002"></script>
+</body>
+</html>

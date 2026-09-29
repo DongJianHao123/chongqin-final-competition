@@ -1,0 +1,146 @@
+#scoreRunButton {
+  border-color: rgba(250, 204, 21, .55);
+  background: rgba(161, 98, 7, .26);
+  color: #fef3c7;
+}
+
+#scoreRunButton:not(:disabled):hover {
+  border-color: rgba(253, 224, 71, .82);
+  background: rgba(180, 112, 12, .38);
+}
+
+#debugSpeedButton span,
+#scoreRunButton span {
+  font-variant-numeric: tabular-nums;
+}
+
+.primary-score-hud.has-penalties {
+  border-color: rgba(251, 146, 60, .72);
+}
+
+.primary-score-penalties {
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(251, 146, 60, .24);
+  border-radius: 9px;
+  background: rgba(44, 19, 8, .34);
+}
+
+.primary-score-penalties > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 9px;
+  border-bottom: 1px solid rgba(251, 146, 60, .16);
+  color: #fed7aa;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.primary-score-penalties > header b {
+  color: #fdba74;
+  font-variant-numeric: tabular-nums;
+}
+
+.primary-score-penalties ol {
+  display: grid;
+  gap: 6px;
+  max-height: 190px;
+  margin: 0;
+  padding: 7px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.primary-penalty-item {
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+  border-left: 3px solid rgba(251, 146, 60, .75);
+  border-radius: 6px;
+  color: #ffedd5;
+  background: rgba(69, 26, 3, .5);
+}
+
+.primary-penalty-item.is-active {
+  border-left-color: #facc15;
+  background: rgba(113, 63, 18, .52);
+}
+
+.primary-penalty-item > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.primary-penalty-item strong,
+.primary-penalty-item b {
+  font-size: 10px;
+}
+
+.primary-penalty-item b {
+  color: #fb923c;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.primary-penalty-item small {
+  color: #cbd5e1;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.primary-penalty-item > span {
+  color: #fed7aa;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.primary-penalty-empty {
+  padding: 7px 5px;
+  color: #a9c3b2;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+@media (max-width: 1600px) {
+  #pauseButton,
+  #stepButton,
+  #stopButton,
+  #resetButton {
+    width: 38px;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  #pauseButton span,
+  #stepButton span,
+  #stopButton span,
+  #resetButton span {
+    display: none;
+  }
+}
+
+@media (max-width: 1320px) {
+  .topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .account-actions {
+    margin-left: auto;
+  }
+
+  .primary-score-penalties ol {
+    max-height: 130px;
+  }
+}

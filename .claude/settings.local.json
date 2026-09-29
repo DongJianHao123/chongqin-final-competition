@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -d */)",
+      "Bash(wc -l server.js packages/*.js competition-window.js)",
+      "Bash(wc -l projects/tmm/src/*.ts)",
+      "Bash(node --test tests/ui-parity.test.js tests/toolbox-contract.test.js tests/block-catalog.test.js tests/advanced-block-contract.test.js tests/scoring-reset.test.js tests/debug-run.test.js)",
+      "Bash(node --test --test-concurrency=1 tests/ui-parity.test.js tests/toolbox-contract.test.js tests/block-catalog.test.js tests/advanced-block-contract.test.js tests/scoring-reset.test.js tests/debug-run.test.js)",
+      "Bash(node:*)",
+      "Bash(npm test:*)",
+      "Bash(for f:*)",
+      "Bash(do node:*)",
+      "Bash(echo \"OK: $f\")",
+      "Bash(echo \"FAIL: $f\")",
+      "Bash(done)",
+      "Bash(curl -s -D - -o /dev/null http://127.0.0.1:6180/index.html)",
+      "Bash(find E:Project工作空间aizhenglane-lab -maxdepth 2 -type f -not -path */node_modules/* -not -path */.git/*)",
+      "Bash(grep -o \"defineTheme[^;]\\\\{0,120\\\\}\" vendor/blockly/blockly_compressed.js)",
+      "Bash(find \"lane-lab\\(1\\)\" -type f -not -path '*/node_modules/*' -not -path '*/.git/*')",
+      "Bash(else echo:*)",
+      "Bash(fi)",
+      "Bash(cd:*)",
+      "Bash(node -e \":*)",
+      "Bash(grep -rnE \"detect|observe|approach|sees|centered|distance_to|direction|robotRuntime|createRobot|makeRobot|visionQuery|primaryVision\" projects/blockly-page3/*.js)"
+    ]
+  }
+}

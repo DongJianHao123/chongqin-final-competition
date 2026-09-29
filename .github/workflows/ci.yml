@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.13"
+          package-manager-cache: false
+      - run: npm run check
+      - run: node --test --test-concurrency=1 tests/*.test.js
+
+  blockly:
+    name: Blockly engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: projects/blockly-page3
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.13"
+          package-manager-cache: false
+      - run: node --test --test-concurrency=1 tests/*.test.js
+
+  workshop:
+    name: Vision workshop
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: projects/tmm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.13"
+          package-manager-cache: false
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  car-python:
+    name: Python car simulator smoke tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: projects/car-python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.13"
+          package-manager-cache: false
+      - run: npm run check
+      - run: node --test tests/competition-core.test.js tests/static-contract.test.js tests/official-sso.test.js tests/strict-png.test.js
+
+  simulator-full-suite:
+    name: Full simulator suite
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: projects/car-python
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22.13"
+          package-manager-cache: false
+      - run: npm test

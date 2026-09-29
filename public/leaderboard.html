@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>排行榜 · 广阳岛比赛平台</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/platform.css">
+  <link rel="stylesheet" href="/leaderboard.css">
+</head>
+<body class="portal-page">
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark">AI</span><span>广阳岛比赛平台</span></div>
+    <div class="top-actions">
+      <a class="button" href="/portal.html">返回首页</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero portal-hero">
+      <div>
+        <span class="eyebrow">GUANGYANG ISLAND COMPETITION</span>
+        <h1>计时运行排行榜</h1>
+        <p>按程序执行用时从短到长排名；同队或同一选手仅保留最优成绩。</p>
+      </div>
+    </section>
+
+    <div id="notice" class="notice" role="status">正在读取排行榜…</div>
+
+    <section class="leaderboard-card" aria-label="计时运行排行榜">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th class="col-rank">排名</th>
+            <th class="col-name">选手</th>
+            <th class="col-group">组别</th>
+            <th class="col-time">用时</th>
+            <th class="col-blocks">积木数</th>
+            <th class="col-lines">代码行数</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboardBody"></tbody>
+      </table>
+      <p id="emptyState" class="empty-state" hidden>暂无计时运行成绩。</p>
+    </section>
+  </main>
+  <script src="/leaderboard.js"></script>
+</body>
+</html>

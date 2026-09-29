@@ -1,0 +1,65 @@
+.leaderboard-card {
+  border: 1px solid #2d4a67;
+  border-radius: 18px;
+  padding: 6px 20px 18px;
+  background: linear-gradient(160deg, #102640e8, #0b1b2eec);
+  box-shadow: 0 18px 50px #0003;
+  overflow-x: auto;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.leaderboard-table th {
+  text-align: left;
+  padding: 16px 12px;
+  color: #8da6bd;
+  font-size: 13px;
+  font-weight: 700;
+  border-bottom: 1px solid #2b455f;
+}
+
+.leaderboard-table td {
+  padding: 13px 12px;
+  border-bottom: 1px solid #1e3650;
+  color: #dbeaf7;
+}
+
+.leaderboard-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.col-rank { width: 76px; }
+.col-time { white-space: nowrap; }
+.col-group, .col-blocks, .col-lines { text-align: right; }
+.leaderboard-table th.col-group,
+.leaderboard-table th.col-blocks,
+.leaderboard-table th.col-lines { text-align: right; }
+
+.col-name strong,
+.col-name small { display: block; }
+.col-name small { color: #8ea8c1; margin-top: 3px; font-weight: 400; }
+
+.rank-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: #12304b;
+  color: #cfe4f7;
+  font-weight: 800;
+}
+
+.rank-badge.rank-1 { background: linear-gradient(135deg, #f5c84c, #e2a93b); color: #3a2a05; }
+.rank-badge.rank-2 { background: linear-gradient(135deg, #cdd6e2, #a9b6c6); color: #1b2838; }
+.rank-badge.rank-3 { background: linear-gradient(135deg, #d9a05f, #b5783c); color: #3a2307; }
+
+.empty-state {
+  color: #8ca3ba;
+  text-align: center;
+  padding: 28px 0 14px;
+}
