@@ -269,7 +269,7 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
     mapRevision: Number.isInteger(publishedMap?.revision) ? publishedMap.revision : null,
     mapDigest: typeof publishedMap?.digest === "string" ? publishedMap.digest : null,
     title: `广阳岛综合任务${level}`,
-    text: `${targets.length} 个目标物、${distractors.length} 个混淆物、${obstacles.length} 个岩石障碍物；按顺序经过 ${checkpoints.length} 个途径点后返回停车区。`,
+    text: `${targets.length} 个目标物、${distractors.length} 个混淆物${obstacles.length ? `、${obstacles.length} 个岩石障碍物` : ""}；${checkpoints.length ? `按顺序经过 ${checkpoints.length} 个途径点后` : ""}返回停车区。`,
     environment: "guangyang",
     mapStyle: "basic",
     mapSize: PRIMARY_GUANGYANG_MAP.width,
@@ -1241,7 +1241,7 @@ function missionProgressSnapshot() {
       : `还需移走 ${progress.distractorTotal - progress.distractorClearedCount} 个蓝色混淆物`;
     else if (progress.checkpointCount < progress.checkpointTotal) hint = `按顺序前往途径点 ${progress.checkpointCount + 1}`;
     else if (!progress.goalReached) hint = "全部目标已完成，返回起点停车区";
-    else if (progress.finished) hint = "目标物、混淆物、途径点、避障和返航均已完成";
+    else if (progress.finished) hint = "全部任务目标均已完成";
     return {
       completed: progress.completed,
       total: progress.total,

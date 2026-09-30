@@ -15,23 +15,23 @@
   const PACKAGE_STYLES = Object.freeze(["box", "orange", "tennis"]);
   const TASKS = Object.freeze({
     "GYI-PRIMARY-01": Object.freeze({
-      key: "guangyang1", level: 1, name: "广阳岛综合任务1", checkpoints: 4, objects: 1,
-      checkpointLabels: Object.freeze(["戴胜湖路口", "白鹭湖", "油菜花田", "神兽营地"])
+      key: "guangyang1", level: 1, name: "广阳岛综合任务1", checkpoints: 0, targets: 1, distractors: 2, obstacles: 0,
+      checkpointLabels: Object.freeze([])
     }),
     "GYI-PRIMARY-02": Object.freeze({
-      key: "guangyang2", level: 2, name: "广阳岛综合任务2", checkpoints: 6, objects: 2,
+      key: "guangyang2", level: 2, name: "广阳岛综合任务2", checkpoints: 6, targets: 2, distractors: 2, obstacles: 2,
       checkpointLabels: Object.freeze(["戴胜湖路口", "白鹭湖", "油菜花田", "神兽营地", "中央北路口", "中央南路口"])
     }),
     "GYI-PRIMARY-03": Object.freeze({
-      key: "guangyang3", level: 3, name: "广阳岛综合任务3", checkpoints: 8, objects: 3,
+      key: "guangyang3", level: 3, name: "广阳岛综合任务3", checkpoints: 8, targets: 3, distractors: 3, obstacles: 3,
       checkpointLabels: Object.freeze(["戴胜湖路口", "白鹭湖", "油菜花田", "神兽营地", "中央北路口", "中央南路口", "西中路口", "东外环路口"])
     })
   });
   const DEFAULT_LAYOUTS = Object.freeze({
     "GYI-PRIMARY-01": freezeLayout({
-      checkpoints: [[-2.4865, -2.4556], [7.1815, -3.2587], [6.471, 0.4479], [4.4324, 6.8726]],
+      checkpoints: [],
       targets: [[-9.8687, -6.7181]], storage: [-10.7336, -8.0772],
-      distractors: [[-8.0772, 5.4826]], obstacles: [[-10.9498, 2.0849]],
+      distractors: [[-8.0772, 5.4826], [-2.4865, -4.4015]], obstacles: [],
       targetStyle: "orange", distractorStyle: "tennis"
     }),
     "GYI-PRIMARY-02": freezeLayout({
@@ -130,10 +130,10 @@
     }
     const layout = {
       checkpoints: pointList(value.checkpoints, task.checkpoints, "途径点"),
-      targets: pointList(value.targets, task.objects, "目标物"),
+      targets: pointList(value.targets, task.targets, "目标物"),
       storage: point(value.storage, "目标点"),
-      distractors: pointList(value.distractors, task.objects, "混淆物"),
-      obstacles: pointList(value.obstacles, task.objects, "障碍物"),
+      distractors: pointList(value.distractors, task.distractors, "混淆物"),
+      obstacles: pointList(value.obstacles, task.obstacles, "障碍物"),
       targetStyle: normalizePackageStyle(value.targetStyle, "orange"),
       distractorStyle: normalizePackageStyle(value.distractorStyle, "tennis")
     };

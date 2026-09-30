@@ -74,9 +74,9 @@ const EXECUTION_METHODS = Object.freeze([
 ]);
 const EXECUTION_METHOD_SET = new Set(EXECUTION_METHODS);
 const PRIMARY_TASKS = Object.freeze({
-  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1", checkpoints: 4, objects: 1 }),
-  "GYI-PRIMARY-02": Object.freeze({ name: "广阳岛综合任务2", checkpoints: 6, objects: 2 }),
-  "GYI-PRIMARY-03": Object.freeze({ name: "广阳岛综合任务3", checkpoints: 8, objects: 3 })
+  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1", checkpoints: 0, targets: 1, distractors: 2, obstacles: 0 }),
+  "GYI-PRIMARY-02": Object.freeze({ name: "广阳岛综合任务2", checkpoints: 6, targets: 2, distractors: 2, obstacles: 2 }),
+  "GYI-PRIMARY-03": Object.freeze({ name: "广阳岛综合任务3", checkpoints: 8, targets: 3, distractors: 3, obstacles: 3 })
 });
 const WORKSPACE_RECOVERY_HEADER = "x-chenlong-workspace-recovery";
 const WORKSPACE_RECOVERY_TOKEN = "20260915";
@@ -271,15 +271,44 @@ function mapDigest(taskId, revision, layout) {
   return sha256(JSON.stringify({ taskId, revision, layout }));
 }
 
+function createInitialMapConfig(taskId, timestamp = nowIso()) {
+  const revision = 1;
+  const layout = primaryGuangyangMaps.normalizeLayout(taskId, primaryGuangyangMaps.defaultLayout(taskId));
+  const version = { revision, digest: mapDigest(taskId, revision, layout), updatedAt: timestamp, updatedByUserId: null, layout };
+  return { taskId, currentRevision: revision, versions: [version] };
+}
+
 function createInitialMapConfigs(timestamp = nowIso()) {
   const result = {};
   Object.keys(PRIMARY_TASKS).forEach(taskId => {
-    const revision = 1;
-    const layout = primaryGuangyangMaps.normalizeLayout(taskId, primaryGuangyangMaps.defaultLayout(taskId));
-    const version = { revision, digest: mapDigest(taskId, revision, layout), updatedAt: timestamp, updatedByUserId: null, layout };
-    result[taskId] = { taskId, currentRevision: revision, versions: [version] };
+    result[taskId] = createInitialMapConfig(taskId, timestamp);
   });
   return result;
+}
+
+function reconcileMapConfigs(mapConfigs) {
+  let changed = false;
+  Object.keys(PRIMARY_TASKS).forEach(taskId => {
+    const entry = mapConfigs && typeof mapConfigs === "object" ? mapConfigs[taskId] : null;
+    const current = entry && Array.isArray(entry.versions)
+      ? entry.versions.find(version => version.revision === entry.currentRevision)
+        || entry.versions[entry.versions.length - 1]
+      : null;
+    let compatible = false;
+    if (current && current.layout) {
+      try {
+        primaryGuangyangMaps.normalizeLayout(taskId, current.layout);
+        compatible = true;
+      } catch (_error) {
+        compatible = false;
+      }
+    }
+    if (!compatible) {
+      mapConfigs[taskId] = createInitialMapConfig(taskId);
+      changed = true;
+    }
+  });
+  return changed;
 }
 
 function defaultStore() {
@@ -527,6 +556,7 @@ if (store.schemaVersion === JSON_RECORD_STORE_SCHEMA_VERSION) {
 }
 recordStore.migrateParticipantGroups(canonicalParticipantGroup);
 if (normalizeCoreParticipantGroups(store)) storeNeedsWrite = true;
+if (reconcileMapConfigs(store.mapConfigs)) storeNeedsWrite = true;
 if (storeNeedsWrite) writeStoreSync();
 
 // Editable workspaces are optional and live in their own SQLite file. A
@@ -1242,10 +1272,10 @@ async function handleApi(request, response, url) {
     return;
   }
   if (url.pathname === "/api/maps" && request.method === "GET") {
-    const account = principal(request);
+    principal(request);
     sendJson(response, 200, {
       schemaVersion: "chenlong.blockly-maps/v1",
-      maps: account.identitySource === "platform" ? platformMaps(request) : allCurrentMapConfigs(),
+      maps: allCurrentMapConfigs(),
       authoritative: false
     });
     return;
@@ -1499,8 +1529,7 @@ async function handleApi(request, response, url) {
     return;
   }
   if (url.pathname === "/api/records" && request.method === "POST") {
-    const account = principal(request);
-    const { user } = account;
+    const { user } = principal(request);
     assertSameOrigin(request);
     const body = await parseJson(request);
     if (!exactKeys(body, ["taskId", "mapRevision", "mapDigest", "completed", "checkpointCount", "targetDeliveredCount", "distractorClearedCount", "failedObstacleCount", "goalReached", "blockedMoves", "offRoadEpisodes", "offRoadDurationMs", "durationMs", "programCode", "workspaceXml", "executionTrace", "blockCount", "codeLineCount"])) {
@@ -1509,14 +1538,14 @@ async function handleApi(request, response, url) {
     const executionTrace = normalizeExecutionTrace(body.executionTrace);
     const capabilityUsage = deriveCapabilityUsage(executionTrace);
     const task = PRIMARY_TASKS[body.taskId];
-    const minimumMapRevision = account.identitySource === "platform" ? 0 : 1;
+    const minimumMapRevision = 1;
     if (!task || typeof body.completed !== "boolean"
       || !Number.isInteger(body.mapRevision) || body.mapRevision < minimumMapRevision
       || typeof body.mapDigest !== "string" || !/^[a-f0-9]{64}$/.test(body.mapDigest)
       || !Number.isInteger(body.checkpointCount) || body.checkpointCount < 0 || body.checkpointCount > task.checkpoints
-      || !Number.isInteger(body.targetDeliveredCount) || body.targetDeliveredCount < 0 || body.targetDeliveredCount > task.objects
-      || !Number.isInteger(body.distractorClearedCount) || body.distractorClearedCount < 0 || body.distractorClearedCount > task.objects
-      || !Number.isInteger(body.failedObstacleCount) || body.failedObstacleCount < 0 || body.failedObstacleCount > task.objects
+      || !Number.isInteger(body.targetDeliveredCount) || body.targetDeliveredCount < 0 || body.targetDeliveredCount > task.targets
+      || !Number.isInteger(body.distractorClearedCount) || body.distractorClearedCount < 0 || body.distractorClearedCount > task.distractors
+      || !Number.isInteger(body.failedObstacleCount) || body.failedObstacleCount < 0 || body.failedObstacleCount > task.obstacles
       || body.failedObstacleCount > body.blockedMoves
       || typeof body.goalReached !== "boolean"
       || !Number.isInteger(body.blockedMoves) || body.blockedMoves < 0 || body.blockedMoves > 99
@@ -1533,19 +1562,17 @@ async function handleApi(request, response, url) {
       checkpointCount: body.checkpointCount,
       checkpointTotal: task.checkpoints,
       targetDeliveredCount: body.targetDeliveredCount,
-      targetTotal: task.objects,
+      targetTotal: task.targets,
       distractorClearedCount: body.distractorClearedCount,
-      distractorTotal: task.objects,
+      distractorTotal: task.distractors,
       failedObstacleCount: body.failedObstacleCount,
-      obstacleTotal: task.objects,
+      obstacleTotal: task.obstacles,
       goalReached: body.goalReached
     });
     if (body.completed !== taskProgress.finished) {
       throw new HttpError(400, "INVALID_RECORD", "运行记录的完成状态与任务证据不一致。" );
     }
-    const runMapVersion = account.identitySource === "platform"
-      ? platformMapVersion(request, body.taskId, body.mapRevision, body.mapDigest)
-      : mapVersion(body.taskId, body.mapRevision, body.mapDigest);
+    const runMapVersion = mapVersion(body.taskId, body.mapRevision, body.mapDigest);
     const score = scoreRun({ ...body, task, taskProgress });
     const record = {
       id: randomId("run"),

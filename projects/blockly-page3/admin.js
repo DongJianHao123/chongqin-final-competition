@@ -505,6 +505,7 @@
     document.querySelector("#adminMapRevision").textContent = `当前修订 ${config.revision} · 共 ${config.versionCount || 1} 个版本 · ${formatTime(config.updatedAt)}`;
     const entries = markerEntries(config);
     [["途径点（按编号依次通过）", entries.filter(entry => entry.type === "checkpoint")], ["任务物品", entries.filter(entry => entry.type !== "checkpoint")]]
+      .filter(([, groupEntries]) => groupEntries.length > 0)
       .forEach(([title, groupEntries]) => {
         const fieldset = document.createElement("fieldset");
         const legend = document.createElement("legend");
@@ -562,10 +563,10 @@
 
   async function refresh(which = "all") {
     try {
-      if (which === "all") await Promise.all(platformMode ? [loadUsers(), loadRecords()] : [loadUsers(), loadRecords(), loadMaps()]);
+      if (which === "all") await Promise.all([loadUsers(), loadRecords(), loadMaps()]);
       if (which === "users") await loadUsers();
       if (which === "records") await loadRecords();
-      if (which === "maps" && !platformMode) await loadMaps();
+      if (which === "maps") await loadMaps();
       renderSummary();
       renderUsers();
       renderRecords();
@@ -589,14 +590,6 @@
       if (payload?.user?.role !== "admin") throw new Error("需要管理员账号才能查看此页。 ");
       state.user = payload.user;
       document.querySelector("#adminIdentity").textContent = `管理员：${payload.user.username}`;
-      if (platformMode) {
-        const mapTab = document.querySelector('[data-admin-tab="maps"]');
-        const mapPanel = document.querySelector('[data-admin-panel="maps"]');
-        if (mapTab) mapTab.hidden = true;
-        if (mapPanel) mapPanel.hidden = true;
-        const headingCopy = document.querySelector(".primary-admin-heading span");
-        if (headingCopy) headingCopy.textContent = "正式成绩、参赛队伍和积木程序集中管理；比赛地图请在统一平台编辑。";
-      }
       await refresh();
     } catch (_error) { window.location.replace(loginLocation()); }
   }
