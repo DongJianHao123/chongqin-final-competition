@@ -171,7 +171,7 @@ CREATE TABLE map_config_versions (
 |------|------|------|
 | 统一库访问层 | `packages/platform-store.js`（新） | schema DDL + users/teams/sessions/records/workspaces/map_configs 的类型化读写 |
 | 本地 auth | `packages/platform-auth.js`（新） | scrypt 密码哈希、register/login/logout/me/team-invite（从 auth-store.js 提炼） |
-| 外部 SSO | `packages/official-sso.js` + `packages/platform-service-auth.js`（从 car-python/backend 迁入） | SSO 跳转/回调/换发 token |
+| 外部 SSO | `packages/official-sso.js`（从 car-python/backend 迁入） | SSO 签名校验 / 回调 / 换发 token |
 | 地图规则 | 复用 `projects/blockly-page3/guangyang-map-config.js` + `guangyang-scoring.js` | 根网关 server 端 `require` 这两个 UMD 模块做 normalizeLayout / roadMatch |
 | 主服务 | 根 `server.js`（改造） | 平台 + auth + blockly 全部路由，直读 SQLite |
 | 建库种子 | `tools/migrate-db.js`（新） | 幂等建表 + 种子地图 + 迁移 admin |
@@ -191,7 +191,7 @@ CREATE TABLE map_config_versions (
 
 - **登录入口统一**：所有登录走平台 `/login.html` + `/api/v1/auth/*`。Blockly 侧 `/blockly/login.html` 保留现有「重定向到平台登录页」行为，`/blockly/api/auth/me`、`/blockly/api/auth/logout`、`/blockly/api/auth/team-invite` 变成对统一 auth 的薄适配（返回同一份 principal），不再有独立的 blockly 本地用户表。
 - **本地 auth**：scrypt 参数固定沿用现有 `{algorithm:"scrypt", N:32768, r:8, p:1, keyLength:32}`。`password_hash` 列存该 JSON。register/login/logout/me/team-invite 的校验逻辑从 `car-python/backend/auth-store.js`（1471 行）提炼为 `packages/platform-auth.js`。
-- **外部 SSO**：`official-sso.js` + `platform-service-auth.js` 从 car-python 迁到 `packages/`。根网关 `/sso/jump`、`/api/v1/auth/sso/*` 直接调用，删除 `proxyPythonAuth`。SSO 环境变量（client id/secret/回调 URL）搬到根进程环境，参数由用户提供。
+- **外部 SSO**：`official-sso.js` 从 car-python 迁到 `packages/`。根网关 `/sso/jump`、`/api/v1/auth/sso/*` 直接调用 `verifySsoRequest` + `loginExternalIdentity`，删除 `proxyPythonAuth`。SSO 环境变量（client id/secret/回调 URL）搬到根进程环境，参数由用户提供。`platform-service-auth.js` 是网关↔Python 进程间的联邦 HMAC，单进程下不再需要，随 Python 项目一并删除。
 
 ## 8. 种子数据与 admin 迁移
 
