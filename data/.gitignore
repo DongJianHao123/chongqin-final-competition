@@ -1,1 +1,5 @@
 platform-sso-secret.txt
+platform.sqlite
+platform.sqlite-wal
+platform.sqlite-shm
+
