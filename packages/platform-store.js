@@ -645,6 +645,19 @@ class PlatformStore {
     return this.database.prepare("SELECT task_id FROM map_configs ORDER BY task_id ASC").all()
       .map(row => this.getMapConfig(row.task_id));
   }
+
+  getMapVersion(taskId, revision) {
+    const version = this.database.prepare(
+      "SELECT * FROM map_config_versions WHERE task_id = ? AND revision = ? LIMIT 1"
+    ).get(taskId, revision);
+    return rowToMapVersion(version);
+  }
+
+  countMapVersions(taskId) {
+    return Number(this.database.prepare(
+      "SELECT COUNT(*) AS count FROM map_config_versions WHERE task_id = ?"
+    ).get(taskId).count);
+  }
 }
 
 module.exports = Object.freeze({
