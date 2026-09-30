@@ -47,6 +47,7 @@ const SCHEMA_SQL = `
     role TEXT NOT NULL,
     password_hash TEXT,
     official_user_id TEXT,
+    official_team_id TEXT,
     created_at TEXT NOT NULL
   ) STRICT;
 
@@ -55,6 +56,7 @@ const SCHEMA_SQL = `
     team_name TEXT NOT NULL,
     team_name_key TEXT NOT NULL,
     invite_code TEXT NOT NULL,
+    official_team_id TEXT,
     created_at TEXT NOT NULL
   ) STRICT;
 
@@ -127,6 +129,7 @@ function rowToUser(row) {
     role: row.role,
     passwordHash: row.password_hash ? JSON.parse(row.password_hash) : null,
     officialUserId: row.official_user_id,
+    officialTeamId: row.official_team_id,
     createdAt: row.created_at
   };
 }
@@ -138,6 +141,7 @@ function rowToTeam(row) {
     teamName: row.team_name,
     teamNameKey: row.team_name_key,
     inviteCode: row.invite_code,
+    officialTeamId: row.official_team_id,
     createdAt: row.created_at
   };
 }
@@ -234,13 +238,13 @@ class PlatformStore {
   // ---- users ----
   insertUser(user) {
     this.database.prepare(`
-      INSERT INTO users (id, username, username_key, display_name, team_id, team_name, group_name, role, password_hash, official_user_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO users (id, username, username_key, display_name, team_id, team_name, group_name, role, password_hash, official_user_id, official_team_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       user.id, user.username, user.usernameKey, user.displayName,
       user.teamId || null, user.teamName || null, user.group || null, user.role,
       user.passwordHash ? JSON.stringify(user.passwordHash) : null,
-      user.officialUserId || null, user.createdAt
+      user.officialUserId || null, user.officialTeamId || null, user.createdAt
     );
     return user;
   }
@@ -273,9 +277,9 @@ class PlatformStore {
   // ---- teams ----
   insertTeam(team) {
     this.database.prepare(`
-      INSERT INTO teams (id, team_name, team_name_key, invite_code, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(team.id, team.teamName, team.teamNameKey, team.inviteCode, team.createdAt);
+      INSERT INTO teams (id, team_name, team_name_key, invite_code, official_team_id, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(team.id, team.teamName, team.teamNameKey, team.inviteCode, team.officialTeamId || null, team.createdAt);
     return team;
   }
 
@@ -283,12 +287,51 @@ class PlatformStore {
     return rowToTeam(this.database.prepare("SELECT * FROM teams WHERE id = ? LIMIT 1").get(id));
   }
 
+  findTeamByOfficialId(officialTeamId) {
+    return rowToTeam(this.database.prepare("SELECT * FROM teams WHERE official_team_id = ? LIMIT 1").get(officialTeamId));
+  }
+
   findTeamByNameKey(key) {
     return rowToTeam(this.database.prepare("SELECT * FROM teams WHERE team_name_key = ? LIMIT 1").get(key));
   }
 
+  findTeamByInviteCode(inviteCode) {
+    return rowToTeam(this.database.prepare("SELECT * FROM teams WHERE invite_code = ? LIMIT 1").get(inviteCode));
+  }
+
   listTeams() {
     return this.database.prepare("SELECT * FROM teams ORDER BY created_at ASC").all().map(rowToTeam);
+  }
+
+  listUsersByTeamId(teamId) {
+    return this.database.prepare("SELECT * FROM users WHERE team_id = ? ORDER BY created_at ASC").all(teamId).map(rowToUser);
+  }
+
+  updateUser(id, patch) {
+    const current = this.findUserById(id);
+    if (!current) return false;
+    const next = { ...current, ...patch };
+    this.database.prepare(`
+      UPDATE users SET username = ?, username_key = ?, display_name = ?, team_id = ?, team_name = ?,
+        group_name = ?, role = ?, password_hash = ?, official_user_id = ?, official_team_id = ?
+      WHERE id = ?
+    `).run(
+      next.username, next.usernameKey, next.displayName, next.teamId || null, next.teamName || null,
+      next.group || null, next.role, next.passwordHash ? JSON.stringify(next.passwordHash) : null,
+      next.officialUserId || null, next.officialTeamId || null, id
+    );
+    return this.findUserById(id);
+  }
+
+  updateTeam(id, patch) {
+    const current = this.findTeamById(id);
+    if (!current) return false;
+    const next = { ...current, ...patch };
+    this.database.prepare(`
+      UPDATE teams SET team_name = ?, team_name_key = ?, invite_code = ?, official_team_id = ?
+      WHERE id = ?
+    `).run(next.teamName, next.teamNameKey, next.inviteCode, next.officialTeamId || null, id);
+    return this.findTeamById(id);
   }
 
   // ---- sessions ----
@@ -310,6 +353,19 @@ class PlatformStore {
 
   deleteExpiredSessions(nowIso) {
     this.database.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(nowIso);
+  }
+
+  listSessionsByUserId(userId) {
+    return this.database.prepare("SELECT * FROM sessions WHERE user_id = ? ORDER BY created_at ASC")
+      .all(userId).map(rowToSession);
+  }
+
+  countSessions() {
+    return Number(this.database.prepare("SELECT COUNT(*) AS count FROM sessions").get().count);
+  }
+
+  countUsers() {
+    return Number(this.database.prepare("SELECT COUNT(*) AS count FROM users").get().count);
   }
 
   // ---- records ----
