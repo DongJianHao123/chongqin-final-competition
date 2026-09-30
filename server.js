@@ -8,63 +8,62 @@ const net = require("node:net");
 const path = require("node:path");
 const { URL } = require("node:url");
 
-const contract = require("./packages/platform-contract.js");
-const officialScores = require("./packages/score-download.js");
-const liveScores = require("./packages/live-score-source.js");
-const competitionWindow = require("./competition-window.js");
+const { PlatformStore } = require("./packages/platform-store.js");
+const { PlatformAuth, AUTH_COOKIE_NAME, AuthStoreError } = require("./packages/platform-auth.js");
+const { createBlocklyApi, HttpError } = require("./packages/blockly-api.js");
+const {
+  OfficialSsoError,
+  OfficialSsoReplayStore,
+  verifySsoRequest,
+  requireSsoSecret
+} = require("./packages/official-sso.js");
+
+const DATA_DIR = path.join(__dirname, "data");
+const BLOCKLY_DIR = path.join(__dirname, "projects", "blockly-page3");
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 6190;
-const DEFAULT_UPSTREAMS = Object.freeze({
-  python: "http://127.0.0.1:6178",
-  blockly: "http://127.0.0.1:6180",
-  // 识物工坊已随决赛改造删除。此处保留占位 origin 仅为兼容尚未改造的官方
-  // 成绩导出数据源（packages/live-score-source.js 在构造期读取 upstreams.workshop），
-  // 网关自身不再代理或展示识物工坊。
-  workshop: "http://127.0.0.1:3000"
-});
-const DEFAULT_AUTH_STORE = path.join(__dirname, "projects", "car-python", ".runtime", "auth", "auth-store.json");
 const PLATFORM_SCHEMA_VERSION = "chenlong.competition-platform/v1";
 const PLATFORM_READINESS_SCHEMA_VERSION = "chenlong.competition-platform-readiness/v1";
 const ADMIN_OVERVIEW_SCHEMA_VERSION = "chenlong.platform-admin-overview/v1";
 const PERSONAL_SCORES_SCHEMA_VERSION = "chenlong.platform-personal-scores/v1";
-const MAPS_SCHEMA_VERSION = "chenlong.blockly-maps/v1";
-const MAX_PROXY_BODY_BYTES = 48 * 1024 * 1024;
-const MAX_AUTH_PROXY_BODY_BYTES = 16 * 1024;
-const MAX_AUTH_STORE_BYTES = 8 * 1024 * 1024;
+const AUTH_RESPONSE_SCHEMA_VERSION = "chenlong.auth/v1";
+const TEAM_INVITE_SCHEMA_VERSION = "chenlong.team-invite/v1";
+const ADMIN_USERS_SCHEMA_VERSION = "chenlong.platform-admin-users/v1";
+const MAX_AUTH_BODY_BYTES = 16 * 1024;
+const ADMIN_PAGE_SIZE = 15;
+const MAX_DURATION_MS = 600_000;
 const STATIC_STREAM_PATH_PATTERN = /\.(?:wasm|zip|onnx|png|jpe?g|gif|webp|avif|svg|ico|woff2?|ttf|otf)$/i;
 const TEXT_STATIC_PATH_PATTERN = /\.(?:js|css)$/i;
-const ADMIN_PAGE_SIZE = 15;
-const READINESS_TIMEOUT_MS = 2_500;
-const TASKS = Object.freeze(["task1", "task2", "task3"]);
 const PARTICIPANT_GROUP_LABELS = Object.freeze({
   primary: "小学组",
   junior: "初中组",
   high: "高中组"
 });
 const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-// Bound fan-out to each local child service during large refresh/login waves.
-// Excess work waits in the agent and completed sockets are reused.
-const UPSTREAM_AGENT = new http.Agent({
-  keepAlive: true,
-  keepAliveMsecs: 1_000,
-  maxSockets: 128,
-  maxFreeSockets: 32,
-  scheduling: "lifo"
+
+// 单进程直连：一个 SQLite 库 + 一个 scrypt 认证 + 吸收的 Blockly API。
+const store = new PlatformStore({ dataDir: DATA_DIR });
+const auth = new PlatformAuth({ store });
+const blocklyApi = createBlocklyApi({
+  store,
+  auth,
+  publicOrigin: process.env.CHENLONG_PLATFORM_PUBLIC_ORIGIN || ""
 });
-const HOP_BY_HOP = new Set([
-  "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-  "te", "trailer", "transfer-encoding", "upgrade"
-]);
-// External proxy metadata describes the browser-to-gateway hop, not the
-// gateway-to-local-service hop.  Forwarding it makes frameworks reconstruct a
-// public HTTPS URL while receiving a loopback HTTP Origin.  The one endpoint
-// that needs the client IP (official SSO) receives a separately normalized
-// x-forwarded-for value after this filter.
-const EXTERNAL_PROXY_HEADERS = new Set([
-  "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-port",
-  "x-forwarded-proto", "cf-connecting-ip", "cf-visitor"
-]);
+
+// 外部 SSO：密钥缺失时整条跳转链路不可用，登录页仍走本地账号。
+let officialSsoSecret = null;
+try {
+  const secretSource = process.env.CHENLONG_OFFICIAL_SSO_SECRET;
+  if (typeof secretSource === "string" && secretSource !== "") {
+    officialSsoSecret = requireSsoSecret(secretSource);
+  }
+} catch (_error) {
+  officialSsoSecret = null;
+}
+const officialSsoReplayStore = officialSsoSecret === null
+  ? null
+  : new OfficialSsoReplayStore({ rootDir: path.join(DATA_DIR, "official-sso") });
 
 class PlatformHttpError extends Error {
   constructor(statusCode, code, message, headers = {}) {
@@ -83,15 +82,6 @@ function positivePort(value, fallback) {
     throw new TypeError("platform port must be an integer between 0 and 65535");
   }
   return port;
-}
-
-function normalizedUpstream(value, fallback) {
-  const parsed = new URL(value || fallback);
-  if (parsed.protocol !== "http:" || parsed.username || parsed.password
-    || parsed.pathname !== "/" || parsed.search || parsed.hash) {
-    throw new TypeError("platform upstream must be one plain HTTP origin");
-  }
-  return parsed.origin;
 }
 
 function normalizedPublicOrigin(value) {
@@ -157,14 +147,6 @@ function clientIpForRequest(request, trustedProxyIps) {
   return firstForwarded || direct;
 }
 
-function platformSecret(value) {
-  const secret = value || process.env.CHENLONG_PLATFORM_SSO_SECRET;
-  if (typeof secret !== "string" || Buffer.byteLength(secret, "utf8") < 32) {
-    throw new TypeError("CHENLONG_PLATFORM_SSO_SECRET must contain at least 32 UTF-8 bytes");
-  }
-  return secret;
-}
-
 function jsonBody(response, statusCode, payload, headers = {}) {
   const body = Buffer.from(`${JSON.stringify(payload)}\n`, "utf8");
   response.writeHead(statusCode, {
@@ -177,35 +159,12 @@ function jsonBody(response, statusCode, payload, headers = {}) {
   response.end(body);
 }
 
-function platformError(code, message) {
-  return {
-    schemaVersion: PLATFORM_SCHEMA_VERSION,
-    authoritative: false,
-    error: { code, message }
-  };
-}
-
-function competitionClockNow(options) {
-  const nowMs = Number(options.now());
-  if (!Number.isFinite(nowMs)) {
-    throw new PlatformHttpError(500, "COMPETITION_CLOCK_INVALID", "比赛截止时钟不可用，请联系管理员。 ");
+function safePathname(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (_error) {
+    throw new PlatformHttpError(400, "INVALID_PATH", "请求路径编码无效。");
   }
-  return nowMs;
-}
-
-function assertCompetitionSubmissionOpen(request, options, pathname = null) {
-  const resolvedPathname = pathname || safePathname(new URL(request.url, "http://platform.local").pathname);
-  const kind = competitionWindow.submissionRequestKind(resolvedPathname, request.method);
-  if (!kind) return null;
-  if (!competitionWindow.submissionsOpen(competitionClockNow(options))) {
-    request.resume?.();
-    throw new PlatformHttpError(
-      403,
-      competitionWindow.SUBMISSION_CLOSED_CODE,
-      competitionWindow.SUBMISSION_CLOSED_MESSAGE
-    );
-  }
-  return kind;
 }
 
 function requestExternalOrigin(request, configuredOrigin = null) {
@@ -221,11 +180,9 @@ function requestExternalOrigin(request, configuredOrigin = null) {
   }
 }
 
-function assertExternalOrigin(request, configuredOrigin = null) {
+function assertSameOrigin(request, configuredOrigin = null) {
   if (!WRITE_METHODS.has(request.method || "GET")) return;
   const supplied = request.headers.origin;
-  // Non-browser administration tools may omit Origin. Browser writes always
-  // send it and are checked before any bytes are forwarded upstream.
   if (supplied === undefined) return;
   let normalized;
   try {
@@ -238,21 +195,14 @@ function assertExternalOrigin(request, configuredOrigin = null) {
   }
 }
 
-function safePathname(value) {
-  try {
-    return decodeURIComponent(value);
-  } catch (_error) {
-    throw new PlatformHttpError(400, "INVALID_PATH", "请求路径编码无效。");
-  }
-}
-
 function mimeType(filePath) {
   const extension = path.extname(filePath).toLowerCase();
   return ({
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".css": "text/css; charset=utf-8",
-    ".svg": "image/svg+xml"
+    ".svg": "image/svg+xml",
+    ".png": "image/png"
   })[extension] || "application/octet-stream";
 }
 
@@ -312,97 +262,184 @@ function servePublic(request, response, publicDir, pathname) {
   return true;
 }
 
-const authStoreCache = new Map();
-const authStoreUserIndexes = new WeakMap();
+const BLOCKLY_STATIC_FILES = new Map([
+  ["/", "index.html"],
+  ["/index.html", "index.html"],
+  ["/login.html", "login.html"],
+  ["/auth.js", "auth.js"],
+  ["/admin.html", "admin.html"],
+  ["/admin-team-scores.js", "admin-team-scores.js"],
+  ["/admin.js", "admin.js"],
+  ["/app.js", "app.js"],
+  ["/lane-follow.js", "lane-follow.js"],
+  ["/simulation-clock.js", "simulation-clock.js"],
+  ["/blockly-navigation-core.js", "blockly-navigation-core.js"],
+  ["/guangyang-scoring.js", "guangyang-scoring.js"],
+  ["/guangyang-map-config.js", "guangyang-map-config.js"],
+  ["/admin.css", "admin.css"],
+  ["/debug-run.css", "debug-run.css"],
+  ["/styles.css", "styles.css"],
+  ["/favicon.svg", "favicon.svg"],
+  ["/vendor/blockly/blockly_compressed.js", path.join("vendor", "blockly", "blockly_compressed.js")],
+  ["/vendor/blockly/blocks_compressed.js", path.join("vendor", "blockly", "blocks_compressed.js")],
+  ["/vendor/blockly/javascript_compressed.js", path.join("vendor", "blockly", "javascript_compressed.js")],
+  ["/vendor/blockly/msg/zh-hans.js", path.join("vendor", "blockly", "msg", "zh-hans.js")],
+  ["/vendor/three/three.min.js", path.join("vendor", "three", "three.min.js")],
+  ["/vendor/lucide/lucide.min.js", path.join("vendor", "lucide", "lucide.min.js")]
+]);
 
-function authStoreUserIndex(authStore) {
-  let index = authStoreUserIndexes.get(authStore);
-  if (!index) {
-    index = new Map(authStore.users.map(user => [user.id, user]));
-    authStoreUserIndexes.set(authStore, index);
+function rewriteBlocklyText(buffer, contentType) {
+  let text = buffer.toString("utf8");
+  text = text.replace(/(["'`])\/api\//g, "$1/blockly/api/")
+    .replace(/(["'`])\/(admin|index)\.html/g, "$1/blockly/$2.html");
+  if (contentType.includes("text/html")) {
+    text = text.replace(
+      /(<(?:script|link|img|a|form)[^>]+(?:src|href|action)=(["']))(?!\/|blockly\/)/gi,
+      (match, prefix) => `${prefix}/blockly/`
+    );
+    text = text.replace(/\/blockly\/(login|portal)\.html/g, "/$1.html");
   }
-  return index;
+  return Buffer.from(text, "utf8");
 }
 
-function readAuthStore(authStorePath) {
-  let stat;
-  try {
-    stat = fs.lstatSync(authStorePath);
-  } catch (_error) {
-    throw new PlatformHttpError(503, "AUTH_STORE_UNAVAILABLE", "统一账户数据暂时不可读取。");
+function serveBlockly(request, response, pathname, searchParams) {
+  const relative = BLOCKLY_STATIC_FILES.get(pathname);
+  if (!relative) return false;
+  const filePath = path.join(BLOCKLY_DIR, relative);
+  const data = fs.readFileSync(filePath);
+  const contentType = mimeType(filePath);
+  const isText = TEXT_STATIC_PATH_PATTERN.test(pathname) || pathname.endsWith(".html");
+  const body = isText ? rewriteBlocklyText(data, contentType) : data;
+  const cacheControl = isText
+    ? textAssetCacheControl(pathname, searchParams)
+    : (STATIC_STREAM_PATH_PATTERN.test(pathname) ? "public, max-age=3600" : "no-store, max-age=0");
+  const etag = isText ? assetEtag(body) : null;
+  const headers = {
+    "Content-Type": contentType,
+    "Content-Length": body.length,
+    "Cache-Control": cacheControl,
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer"
+  };
+  if (etag) headers.ETag = etag;
+  if (etag && request.headers["if-none-match"] === etag && ["GET", "HEAD"].includes(request.method || "GET")) {
+    delete headers["Content-Length"];
+    response.writeHead(304, headers);
+    response.end();
+    return true;
   }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.size < 1 || stat.size > MAX_AUTH_STORE_BYTES) {
-    throw new PlatformHttpError(503, "AUTH_STORE_UNAVAILABLE", "统一账户数据格式不安全。");
-  }
-  const cached = authStoreCache.get(authStorePath);
-  if (cached && cached.size === stat.size && cached.mtimeMs === stat.mtimeMs) return cached.value;
-  let value;
-  try {
-    value = JSON.parse(fs.readFileSync(authStorePath, "utf8"));
-  } catch (_error) {
-    throw new PlatformHttpError(503, "AUTH_STORE_UNAVAILABLE", "统一账户数据暂时不可读取。");
-  }
-  if (!["chenlong.auth-store/v4", "chenlong.auth-store/v5", "chenlong.auth-store/v6"].includes(value?.schemaVersion) || !Array.isArray(value.users)
-    || !Array.isArray(value.teams) || !Array.isArray(value.sessions)) {
-    throw new PlatformHttpError(503, "AUTH_STORE_INCOMPATIBLE", "统一账户数据版本不兼容。");
-  }
-  authStoreCache.set(authStorePath, { size: stat.size, mtimeMs: stat.mtimeMs, value });
-  return value;
+  response.writeHead(200, headers);
+  if (request.method === "HEAD") response.end();
+  else response.end(body);
+  return true;
 }
 
-function enrichPrincipal(publicUser, authStore) {
-  const stored = authStoreUserIndex(authStore).get(publicUser?.id);
-  if (!stored || stored.username !== publicUser.username || stored.role !== publicUser.role) {
-    throw new PlatformHttpError(401, "AUTHENTICATION_REQUIRED", "登录状态已失效，请重新登录。");
-  }
-  return Object.freeze({
-    id: publicUser.id,
-    username: publicUser.username,
-    displayName: publicUser.displayName,
-    role: publicUser.role,
-    teamId: publicUser.role === "admin" ? null : stored.teamId,
-    teamName: publicUser.role === "admin" ? null : publicUser.teamName,
-    group: publicUser.role === "admin" ? null : publicUser.group,
-    createdAt: publicUser.createdAt
-  });
-}
+// ---- 认证与当前用户 ----
 
-function copyRequestHeaders(request, { origin = null, principal = null, mapBundle = null } = {}) {
-  const headers = {};
-  for (const [name, value] of Object.entries(request.headers)) {
-    const lower = name.toLowerCase();
-    if (HOP_BY_HOP.has(lower) || EXTERNAL_PROXY_HEADERS.has(lower)
-      || lower === "host" || lower === "content-length"
-      || lower === contract.PRINCIPAL_HEADER || lower === contract.MAP_BUNDLE_HEADER
-      || lower === "accept-encoding") continue;
-    headers[name] = value;
-  }
-  headers["accept-encoding"] = "identity";
-  if (origin) headers.origin = origin;
-  if (principal) headers[contract.PRINCIPAL_HEADER] = principal;
-  if (mapBundle) headers[contract.MAP_BUNDLE_HEADER] = mapBundle;
-  return headers;
-}
-
-function readIncomingBody(request, maximum = MAX_PROXY_BODY_BYTES) {
-  return new Promise((resolve, reject) => {
-    const contentLength = request.headers["content-length"];
-    if (Array.isArray(contentLength) || (contentLength !== undefined
-      && (!/^\d+$/.test(contentLength) || Number(contentLength) > maximum))) {
-      request.resume();
-      reject(new PlatformHttpError(413, "REQUEST_TOO_LARGE", "请求内容过大。"));
-      return;
+function readCookie(request, name) {
+  const header = request.headers.cookie;
+  if (typeof header !== "string") return null;
+  for (const component of header.split(";")) {
+    const separator = component.indexOf("=");
+    if (separator < 1) continue;
+    if (component.slice(0, separator).trim() === name) {
+      return component.slice(separator + 1).trim();
     }
+  }
+  return null;
+}
+
+function authCookie(token, maxAgeSeconds, { clear = false, sameSite = "Lax" } = {}) {
+  const attributes = [
+    `${AUTH_COOKIE_NAME}=${clear ? "" : token}`,
+    "Path=/",
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    `Max-Age=${clear ? 0 : Math.max(1, Math.floor(maxAgeSeconds))}`
+  ];
+  if (clear) attributes.push("Expires=Thu, 01 Jan 1970 00:00:00 GMT");
+  return attributes.join("; ");
+}
+
+function currentUser(request) {
+  const token = readCookie(request, AUTH_COOKIE_NAME);
+  if (!token) {
+    throw new PlatformHttpError(401, "AUTHENTICATION_REQUIRED", "请先登录统一比赛平台。", {
+      "WWW-Authenticate": "Cookie realm=\"chenlong\""
+    });
+  }
+  let result;
+  try {
+    result = auth.authenticate(token);
+  } catch (error) {
+    throw toPlatformError(error);
+  }
+  const user = store.findUserById(result.user.id);
+  if (!user) throw new PlatformHttpError(500, "AUTH_STORE_CORRUPTED", "登录账户数据不完整，请联系管理员。");
+  return user;
+}
+
+function requireAdmin(user) {
+  if (user.role !== "admin") throw new PlatformHttpError(403, "ADMIN_REQUIRED", "需要管理员权限。");
+  return user;
+}
+
+function publicUser(user) {
+  const isParticipant = user.role !== "admin";
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    teamName: isParticipant && typeof user.teamName === "string" ? user.teamName : null,
+    group: isParticipant ? user.group : null,
+    role: user.role,
+    createdAt: user.createdAt
+  };
+}
+
+function platformUser(user) {
+  return {
+    ...publicUser(user),
+    teamId: user.role === "admin" ? null : (user.teamId || null),
+    officialSso: Boolean(user.officialUserId)
+  };
+}
+
+function adminUserSummary(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    teamId: user.role === "admin" ? null : (user.teamId || null),
+    teamName: user.role === "admin" ? null : (user.teamName || null),
+    group: user.role === "admin" ? null : user.group,
+    role: user.role,
+    createdAt: user.createdAt
+  };
+}
+
+function toPlatformError(error) {
+  if (error instanceof PlatformHttpError) return error;
+  if (error && Number.isInteger(error.statusCode)) {
+    return new PlatformHttpError(error.statusCode, error.code || "REQUEST_FAILED", error.message, error.headers || {});
+  }
+  return error;
+}
+
+// ---- 请求体 ----
+
+function readJsonBody(request, maximumBytes) {
+  return new Promise((resolve, reject) => {
     const chunks = [];
     let length = 0;
     let settled = false;
     request.on("data", chunk => {
       if (settled) return;
       length += chunk.length;
-      if (length > maximum) {
+      if (length > maximumBytes) {
         settled = true;
-        reject(new PlatformHttpError(413, "REQUEST_TOO_LARGE", "请求内容过大。"));
         request.resume();
+        reject(new PlatformHttpError(413, "REQUEST_TOO_LARGE", "请求内容过大。"));
         return;
       }
       chunks.push(chunk);
@@ -410,7 +447,23 @@ function readIncomingBody(request, maximum = MAX_PROXY_BODY_BYTES) {
     request.on("end", () => {
       if (settled) return;
       settled = true;
-      resolve(Buffer.concat(chunks, length));
+      const text = Buffer.concat(chunks, length).toString("utf8");
+      if (!text.trim()) {
+        reject(new PlatformHttpError(400, "INVALID_JSON", "请求内容不能为空。"));
+        return;
+      }
+      let value;
+      try {
+        value = JSON.parse(text);
+      } catch (_error) {
+        reject(new PlatformHttpError(400, "INVALID_JSON", "请求内容不是有效 JSON。"));
+        return;
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        reject(new PlatformHttpError(400, "INVALID_JSON", "请求内容格式不正确。"));
+        return;
+      }
+      resolve(value);
     });
     request.on("error", error => {
       if (settled) return;
@@ -420,453 +473,118 @@ function readIncomingBody(request, maximum = MAX_PROXY_BODY_BYTES) {
   });
 }
 
-function rawUpstreamRequest(origin, requestPath, {
-  method = "GET", headers = {}, body = null, timeoutMs = 15_000
-} = {}) {
-  const target = new URL(requestPath, origin);
-  return new Promise((resolve, reject) => {
-    const outgoingHeaders = { ...headers, host: target.host };
-    if (body !== null) outgoingHeaders["content-length"] = body.length;
-    const upstream = http.request(target, {
-      method,
-      headers: outgoingHeaders,
-      agent: UPSTREAM_AGENT,
-      timeout: timeoutMs
-    }, response => {
-      const chunks = [];
-      let length = 0;
-      response.on("data", chunk => {
-        length += chunk.length;
-        if (length > MAX_PROXY_BODY_BYTES) {
-          upstream.destroy(new PlatformHttpError(502, "UPSTREAM_RESPONSE_TOO_LARGE", "上游响应过大。"));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () => resolve({
-        statusCode: response.statusCode || 502,
-        headers: response.headers,
-        body: Buffer.concat(chunks, length)
-      }));
-    });
-    upstream.on("timeout", () => upstream.destroy(new PlatformHttpError(504, "UPSTREAM_TIMEOUT", "子系统响应超时。")));
-    upstream.on("error", reject);
-    if (body !== null) upstream.end(body);
-    else upstream.end();
-  });
-}
-
-function parseUpstreamJson(result, label) {
-  const type = String(result.headers["content-type"] || "").toLowerCase();
-  if (!type.includes("application/json")) {
-    throw new PlatformHttpError(502, "UPSTREAM_INVALID_RESPONSE", `${label}返回了无法识别的数据。`);
-  }
-  try {
-    return JSON.parse(result.body.toString("utf8"));
-  } catch (_error) {
-    throw new PlatformHttpError(502, "UPSTREAM_INVALID_RESPONSE", `${label}返回了损坏的数据。`);
+function assertAllowedFields(value, allowedFields, codePrefix) {
+  const unknown = Object.keys(value).find(field => !allowedFields.has(field));
+  if (unknown) {
+    throw new PlatformHttpError(400, `${codePrefix}_UNKNOWN_FIELD`, `${codePrefix} 不接受字段：${unknown}。`);
   }
 }
 
-async function probeReadiness(origin, requestPath, validate) {
-  let result;
-  try {
-    result = await rawUpstreamRequest(origin, requestPath, {
-      headers: { accept: "application/json" },
-      timeoutMs: READINESS_TIMEOUT_MS
-    });
-  } catch (error) {
-    return {
-      check: {
-        status: "error",
-        code: error?.code === "UPSTREAM_TIMEOUT" ? "UPSTREAM_TIMEOUT" : "UPSTREAM_UNAVAILABLE"
-      },
-      payload: null
-    };
-  }
-  if (result.statusCode < 200 || result.statusCode >= 300) {
-    return { check: { status: "error", code: "UPSTREAM_HTTP_ERROR" }, payload: null };
-  }
-  let payload;
-  try {
-    payload = JSON.parse(result.body.toString("utf8"));
-  } catch (_error) {
-    return { check: { status: "error", code: "UPSTREAM_INVALID_RESPONSE" }, payload: null };
-  }
-  if (!validate(payload)) {
-    return { check: { status: "error", code: "UPSTREAM_INVALID_RESPONSE" }, payload: null };
-  }
-  return { check: { status: "ok" }, payload };
-}
+// ---- 认证路由 ----
 
-async function platformReadiness(options) {
-  const [python, blockly] = await Promise.all([
-    probeReadiness(options.upstreams.python, "/api/health", payload => (
-      payload?.schemaVersion === "chenlong.backend-health/v1" && payload.status === "ok"
-    )),
-    probeReadiness(options.upstreams.blockly, "/api/health", payload => (
-      payload?.schemaVersion === "chenlong.blockly-health/v1" && payload.status === "ok"
-    ))
-  ]);
-  const checks = {
-    gateway: { status: "ok" },
-    python: python.check,
-    blockly: blockly.check
+function sendAuthResponse(response, statusCode, result, { teamInviteCode = null } = {}) {
+  const payload = {
+    schemaVersion: AUTH_RESPONSE_SCHEMA_VERSION,
+    authenticated: true,
+    user: result.user,
+    session: result.session,
+    bootstrapAdmin: Boolean(result.bootstrapAdmin),
+    authoritative: false
   };
-  const ready = Object.values(checks).every(check => check.status === "ok");
-  const officialSsoConfigured = typeof python.payload?.capabilities?.officialSsoConfigured === "boolean"
-    ? python.payload.capabilities.officialSsoConfigured
-    : null;
-  return {
-    statusCode: ready ? 200 : 503,
-    payload: {
-      schemaVersion: PLATFORM_READINESS_SCHEMA_VERSION,
-      status: ready ? "ok" : "degraded",
-      service: "chenlong-competition-platform",
-      checks,
-      configuration: {
-        trustedProxyConfigured: options.trustedProxyIps.size > 0,
-        publicOriginConfigured: Boolean(options.publicOrigin),
-        officialSsoConfigured
-      },
-      authoritative: false
-    }
-  };
-}
-
-function forwardedCookie(request) {
-  return typeof request.headers.cookie === "string" ? request.headers.cookie : "";
-}
-
-async function pythonCurrentUser(request, options) {
-  const result = await rawUpstreamRequest(options.upstreams.python, "/api/v1/auth/me", {
-    headers: { accept: "application/json", cookie: forwardedCookie(request) }
-  });
-  if (result.statusCode === 401 || result.statusCode === 403) {
-    throw new PlatformHttpError(401, "AUTHENTICATION_REQUIRED", "请先登录统一比赛平台。", {
-      "WWW-Authenticate": "Cookie realm=\"chenlong-platform\""
-    });
-  }
-  if (result.statusCode !== 200) {
-    throw new PlatformHttpError(503, "AUTH_SERVICE_UNAVAILABLE", "统一账户服务暂时不可用。");
-  }
-  const payload = parseUpstreamJson(result, "统一账户服务");
-  if (payload?.schemaVersion !== "chenlong.auth/v1" || payload.authenticated !== true || !payload.user) {
-    throw new PlatformHttpError(502, "AUTH_RESPONSE_INVALID", "统一账户服务响应不兼容。");
-  }
-  return enrichPrincipal(payload.user, readAuthStore(options.authStorePath));
-}
-
-function requireAdmin(user) {
-  if (user.role !== "admin") throw new PlatformHttpError(403, "ADMIN_REQUIRED", "需要管理员权限。");
-  return user;
-}
-
-function pythonTaskToBlockly(taskId) {
-  return contract.PLATFORM_TO_BLOCKLY_TASK[contract.platformTaskId(taskId)] || null;
-}
-
-function mapLayoutForBlockly(layout) {
-  if (!layout || typeof layout !== "object" || Array.isArray(layout)
-    || layout.schemaVersion !== "chenlong.guangyang-map-layout/v2"
-    || !Array.isArray(layout.checkpoints) || !Array.isArray(layout.targets)
-    || !Array.isArray(layout.storage) || !Array.isArray(layout.distractors)
-    || !Array.isArray(layout.obstacles)) {
-    throw new PlatformHttpError(502, "MAP_RESPONSE_INVALID", "Python 地图布局无效。");
-  }
-  return {
-    schemaVersion: layout.schemaVersion,
-    checkpoints: layout.checkpoints,
-    targets: layout.targets,
-    storage: layout.storage,
-    distractors: layout.distractors,
-    obstacles: layout.obstacles
-  };
-}
-
-function assignedVariantId(taskId, teamId) {
-  const counts = {
-    "R2-GYI-MVP-01": 8,
-    "R2-GYI-MVP-02": 10,
-    "R2-GYI-MVP-03": 12
-  };
-  const count = counts[taskId];
-  if (!count || !/^tea_[a-f0-9]{32}$/.test(teamId || "")) {
-    throw new PlatformHttpError(502, "MAP_ASSIGNMENT_INVALID", "队伍地图分配信息无效。");
-  }
-  const digest = crypto.createHash("sha256")
-    .update(`chenlong-map-pool/v1\0${taskId}\0${teamId}`, "utf8")
-    .digest();
-  return `map-${String(digest.readUInt32BE(0) % count + 1).padStart(2, "0")}`;
-}
-
-async function blocklyMapsForRequest(request, options, user) {
-  if (!user || (user.role !== "admin" && !user.teamId)) {
-    throw new PlatformHttpError(403, "PARTICIPANT_REQUIRED", "当前账户没有可用的比赛地图。");
-  }
-  const maps = await Promise.all(Object.entries(contract.PLATFORM_TO_PYTHON_TASK).map(async ([platformTask, pythonTask]) => {
-    const pythonMapPath = user.role === "admin"
-      ? `/api/v1/admin/map-config/${pythonTask}/map-01`
-      : `/api/v1/map-config/${pythonTask}`;
-    const result = await rawUpstreamRequest(options.upstreams.python, pythonMapPath, {
-      headers: { accept: "application/json", cookie: forwardedCookie(request) }
-    });
-    if (result.statusCode !== 200) {
-      if ([401, 403].includes(result.statusCode)) {
-        throw new PlatformHttpError(401, "AUTHENTICATION_REQUIRED", "请先登录统一比赛平台。");
-      }
-      throw new PlatformHttpError(503, "MAP_SERVICE_UNAVAILABLE", "Python 地图服务暂时不可用。");
-    }
-    const map = parseUpstreamJson(result, "Python 地图服务");
-    const blocklyTask = contract.PLATFORM_TO_BLOCKLY_TASK[platformTask];
-    if (!blocklyTask || map?.schemaVersion !== "chenlong.guangyang-map-config/v1"
-      || !/^[a-f0-9]{64}$/.test(map.digest || "") || !Number.isSafeInteger(map.revision)
-      || map.revision < 0 || (map.updatedAt !== null && !Number.isFinite(Date.parse(map.updatedAt)))) {
-      throw new PlatformHttpError(502, "MAP_RESPONSE_INVALID", "Python 地图服务响应不兼容。");
-    }
-    const layout = mapLayoutForBlockly(map.layout);
-    const layoutDigest = crypto.createHash("sha256")
-      .update(contract.canonicalJson(layout), "utf8")
-      .digest("hex");
-    if (layoutDigest !== map.digest) {
-      throw new PlatformHttpError(502, "MAP_RESPONSE_INVALID", "Python 地图摘要与布局不一致。");
-    }
-    return {
-      taskId: blocklyTask,
-      sourceTaskId: pythonTask,
-      variantId: user.role === "admin" ? "map-01" : assignedVariantId(pythonTask, user.teamId),
-      revision: map.revision,
-      digest: map.digest,
-      updatedAt: map.updatedAt,
-      layout
-    };
-  }));
-  return maps;
-}
-
-function signedPrincipal(options, audience, user) {
-  return contract.signPrincipal(options.secret, audience, user);
-}
-
-function signedMapBundle(options, maps) {
-  return contract.signMapBundle(options.secret, maps);
-}
-
-function responseHeadersForClient(headers, scope = null) {
-  const output = {};
-  for (const [name, value] of Object.entries(headers)) {
-    const lower = name.toLowerCase();
-    if (HOP_BY_HOP.has(lower) || lower === "content-length" || lower === "content-encoding") continue;
-    if (scope !== "python" && lower === "set-cookie") continue;
-    output[name] = value;
-  }
-  return output;
-}
-
-function rewriteLocation(value, scope) {
-  if (typeof value !== "string" || !value.startsWith("/")) return value;
-  if (scope === "python" && value.startsWith("/login.html")) {
-    let login;
-    try {
-      login = new URL(value, "http://python.internal");
-    } catch (_error) {
-      return value;
-    }
-    const returnTo = login.searchParams.get("returnTo");
-    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
-      const mountedReturnTo = returnTo === "/"
-        ? "/python/"
-        : returnTo.startsWith("/python/")
-          ? returnTo
-          : `/python${returnTo}`;
-      login.searchParams.set("returnTo", mountedReturnTo);
-    }
-    return `${login.pathname}${login.search}${login.hash}`;
-  }
-  return `/${scope}${value}`.replace(/\/{2,}/g, "/");
-}
-
-function centralLoginLocation(returnTo) {
-  const parameters = new URLSearchParams({ returnTo });
-  return `/login.html?${parameters.toString()}`;
-}
-
-function redirectPageToCentralLogin(response, returnTo) {
-  response.writeHead(302, {
-    Location: centralLoginLocation(returnTo),
-    "Cache-Control": "no-store, max-age=0",
-    "X-Content-Type-Options": "nosniff"
-  });
-  response.end();
-}
-
-function rewriteTextBody(body, scope, contentType) {
-  let text = body.toString("utf8");
-  if (scope === "python") {
-    text = text.replace(/(["'`])\/api\/(v1|health)/g, `$1/python/api/$2`)
-      .replace(/(["'`])\/(records|admin|index)\.html/g, `$1/python/$2.html`);
-  } else if (scope === "blockly") {
-    text = text.replace(/(["'`])\/api\//g, `$1/blockly/api/`)
-      .replace(/(["'`])\/(admin|index)\.html/g, `$1/blockly/$2.html`);
-  }
-  if (contentType.includes("text/html")) {
-    const rootAttribute = new RegExp(`(<(?:script|link|img|a|form)[^>]+(?:src|href|action)=(["']))/(?!/|${scope}/)`, "gi");
-    text = text.replace(rootAttribute,
-      (match, prefix) => `${prefix}/${scope}/`);
-    if (scope === "python" || scope === "blockly") {
-      text = text.replace(new RegExp(`/${scope}/(login|portal)\\.html`, "g"), "/$1.html");
-    }
-  }
-  return Buffer.from(text, "utf8");
-}
-
-function isRewritableType(contentType) {
-  const type = String(contentType || "").toLowerCase();
-  return type.includes("text/html") || type.includes("javascript") || type.includes("text/css");
-}
-
-async function proxyBuffered(request, response, options, {
-  scope, upstreamPath, principal = null, maps = null, cacheControl = "no-store, max-age=0",
-  timeoutMs = 15_000, maximumRequestBytes = MAX_PROXY_BODY_BYTES, headAsGet = false
-}) {
-  assertExternalOrigin(request, options.publicOrigin);
-  const origin = options.upstreams[scope];
-  const requestOrigin = WRITE_METHODS.has(request.method || "GET")
-    // Python validates browser writes against the configured public
-    // platform Origin.  Replacing it with the loopback upstream works only
-    // in local mode and breaks administrator changes through an HTTPS
-    // tunnel.  Blockly has no independent public Origin and continues to
-    // receive its own loopback Origin behind this trusted gateway.
-    ? (["python", "blockly"].includes(scope) ? (options.publicOrigin || origin) : origin)
-    : null;
-  const body = ["GET", "HEAD"].includes(request.method || "GET")
-    ? null
-    : await readIncomingBody(request, maximumRequestBytes);
-  // Recheck after the complete upload is received. A model or run-record body
-  // that starts before midnight but reaches the gateway after the deadline is
-  // not forwarded to any scoring service.
-  assertCompetitionSubmissionOpen(request, options);
-  const headers = copyRequestHeaders(request, {
-    origin: requestOrigin,
-    principal: principal ? signedPrincipal(options, "blockly", principal) : null,
-    mapBundle: maps ? signedMapBundle(options, maps) : null
-  });
-  const upstreamMethod = headAsGet && request.method === "HEAD" ? "GET" : request.method;
-  const result = await rawUpstreamRequest(origin, upstreamPath, {
-    method: upstreamMethod,
-    headers,
-    body,
-    timeoutMs
-  });
-  const contentType = String(result.headers["content-type"] || "");
-  const outgoingHeaders = responseHeadersForClient(result.headers, scope);
-  if (outgoingHeaders.location) outgoingHeaders.location = rewriteLocation(outgoingHeaders.location, scope);
-  const outgoingBody = isRewritableType(contentType)
-    ? rewriteTextBody(result.body, scope, contentType.toLowerCase())
-    : result.body;
-  outgoingHeaders["content-length"] = outgoingBody.length;
-  outgoingHeaders["cache-control"] = cacheControl;
-  if (result.statusCode === 200 && cacheControl.startsWith("public,")) {
-    const etag = assetEtag(outgoingBody);
-    outgoingHeaders.etag = etag;
-    if (request.headers["if-none-match"] === etag && ["GET", "HEAD"].includes(request.method || "GET")) {
-      delete outgoingHeaders["content-length"];
-      response.writeHead(304, outgoingHeaders);
-      response.end();
-      return;
-    }
-  }
-  response.writeHead(result.statusCode, outgoingHeaders);
-  if (request.method === "HEAD") response.end();
-  else response.end(outgoingBody);
-}
-
-function proxyStreamed(request, response, options, {
-  scope, upstreamPath, cacheControl = "public, max-age=3600", timeoutMs = 30_000
-}) {
-  assertExternalOrigin(request, options.publicOrigin);
-  if (!["GET", "HEAD"].includes(request.method || "GET")) {
-    throw new PlatformHttpError(405, "METHOD_NOT_ALLOWED", "静态资源只允许读取。");
-  }
-  const origin = options.upstreams[scope];
-  const target = new URL(upstreamPath, origin);
-  return new Promise((resolve, reject) => {
-    let responseStarted = false;
-    let settled = false;
-    const finish = error => {
-      if (settled) return;
-      settled = true;
-      if (error && !responseStarted) reject(error);
-      else {
-        if (error) response.destroy(error);
-        resolve();
-      }
-    };
-    const upstream = http.request(target, {
-      method: request.method,
-      headers: copyRequestHeaders(request, { origin: null }),
-      agent: UPSTREAM_AGENT,
-      timeout: timeoutMs
-    }, upstreamResponse => {
-      const headers = responseHeadersForClient(upstreamResponse.headers, scope);
-      if (headers.location) headers.location = rewriteLocation(headers.location, scope);
-      const length = Number(upstreamResponse.headers["content-length"]);
-      if (Number.isSafeInteger(length) && length >= 0) headers["content-length"] = String(length);
-      headers["cache-control"] = cacheControl;
-      responseStarted = true;
-      response.writeHead(upstreamResponse.statusCode || 502, headers);
-      if (request.method === "HEAD") {
-        upstreamResponse.resume();
-        response.end();
-        finish();
-        return;
-      }
-      upstreamResponse.on("error", finish);
-      upstreamResponse.on("end", () => finish());
-      upstreamResponse.pipe(response);
-    });
-    upstream.on("timeout", () => upstream.destroy(new PlatformHttpError(504, "UPSTREAM_TIMEOUT", "子系统响应超时。")));
-    upstream.on("error", finish);
-    response.on("close", () => {
-      if (!response.writableEnded) upstream.destroy();
-    });
-    upstream.end();
+  if (typeof teamInviteCode === "string") payload.teamInviteCode = teamInviteCode;
+  jsonBody(response, statusCode, payload, {
+    "Set-Cookie": authCookie(result.token, auth.sessionTtlMs / 1000)
   });
 }
 
-async function proxyPythonAuth(request, response, options, upstreamPath, additionalHeaders = {}) {
-  assertExternalOrigin(request, options.publicOrigin);
-  const body = ["GET", "HEAD"].includes(request.method || "GET")
-    ? null
-    : await readIncomingBody(request, MAX_AUTH_PROXY_BODY_BYTES);
-  const headers = copyRequestHeaders(request, {
-    origin: WRITE_METHODS.has(request.method || "GET")
-      ? (options.publicOrigin || options.upstreams.python)
-      : null
-  });
-  Object.assign(headers, additionalHeaders);
-  const result = await rawUpstreamRequest(options.upstreams.python, upstreamPath, {
-    method: request.method,
-    headers,
-    body
-  });
-  const outgoingHeaders = responseHeadersForClient(result.headers, "python");
-  outgoingHeaders["content-length"] = result.body.length;
-  response.writeHead(result.statusCode, outgoingHeaders);
-  response.end(request.method === "HEAD" ? undefined : result.body);
+async function handleAuthGuest(request, response) {
+  assertSameOrigin(request);
+  const body = await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  assertAllowedFields(body, new Set(), "GUEST");
+  const created = await auth.createGuest();
+  sendAuthResponse(response, 201, created);
 }
 
-const MAX_DURATION_MS = 600_000;
+async function handleAuthLogin(request, response) {
+  assertSameOrigin(request);
+  const body = await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  assertAllowedFields(body, new Set(["username", "password"]), "LOGIN");
+  const result = await auth.login({ username: body.username, password: body.password });
+  sendAuthResponse(response, 200, result);
+}
+
+async function handleAuthRegister(request, response) {
+  assertSameOrigin(request);
+  const body = await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  assertAllowedFields(body, new Set(["username", "password", "displayName", "teamAction", "teamName", "inviteCode", "group"]), "REGISTER");
+  const result = await auth.register(body);
+  sendAuthResponse(response, 201, result, { teamInviteCode: result.teamInviteCode });
+}
+
+async function handleAuthLogout(request, response) {
+  assertSameOrigin(request);
+  await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  const token = readCookie(request, AUTH_COOKIE_NAME);
+  if (token) auth.logout(token);
+  jsonBody(response, 200, {
+    schemaVersion: AUTH_RESPONSE_SCHEMA_VERSION,
+    authenticated: false,
+    authoritative: false
+  }, {
+    "Set-Cookie": authCookie("", 0, { clear: true })
+  });
+}
+
+function handleAuthMe(request, response) {
+  const user = currentUser(request);
+  jsonBody(response, 200, {
+    schemaVersion: AUTH_RESPONSE_SCHEMA_VERSION,
+    authenticated: true,
+    user: publicUser(user),
+    authoritative: false
+  });
+}
+
+function handleAuthTeamInvite(request, response) {
+  const user = currentUser(request);
+  const invite = auth.getTeamInviteForUser(user.id);
+  jsonBody(response, 200, {
+    schemaVersion: TEAM_INVITE_SCHEMA_VERSION,
+    teamName: invite.teamName,
+    inviteCode: invite.inviteCode,
+    authoritative: false
+  });
+}
+
+// ---- 平台路由 ----
+
+function handlePlatformMe(request, response) {
+  const user = currentUser(request);
+  jsonBody(response, 200, {
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    authenticated: true,
+    user: platformUser(user),
+    services: {
+      blockly: "/blockly/",
+      admin: user.role === "admin" ? "/admin.html" : null
+    },
+    authoritative: false
+  });
+}
+
+function handlePlatformTeamInvite(request, response) {
+  const user = currentUser(request);
+  const invite = auth.getTeamInviteForUser(user.id);
+  jsonBody(response, 200, {
+    schemaVersion: TEAM_INVITE_SCHEMA_VERSION,
+    teamName: invite.teamName,
+    inviteCode: invite.inviteCode,
+    authoritative: false
+  });
+}
 
 function recordDurationMs(record) {
-  // Python records carry durationSeconds; Blockly records carry durationMs.
-  // Both are normalized to milliseconds. A record that did not finish the task
-  // or whose duration exceeds the 10-minute cap is treated as the maximum time.
-  const raw = Number.isFinite(record?.durationMs)
-    ? record.durationMs
-    : Number.isFinite(record?.durationSeconds)
-      ? Math.round(record.durationSeconds * 1000)
-      : null;
+  const raw = Number.isFinite(record?.durationMs) ? record.durationMs : null;
   if (raw === null || raw <= 0) return null;
   const finished = typeof record?.completed === "boolean" ? record.completed
     : typeof record?.taskFinished === "boolean" ? record.taskFinished
@@ -875,12 +593,10 @@ function recordDurationMs(record) {
   return Math.min(raw, MAX_DURATION_MS);
 }
 
-function bestDurationMs(records, { ownerUserId = null, teamId = null } = {}) {
+function userBestDurationMs(userId) {
   let best = null;
-  for (const record of Array.isArray(records) ? records : []) {
-    if (record?.recordState !== "submitted") continue;
-    if (ownerUserId && record.ownerUserId !== ownerUserId && record.user?.id !== ownerUserId) continue;
-    if (teamId && record.teamId !== teamId && record.user?.teamId !== teamId) continue;
+  for (const record of store.allRecords({ recordState: "submitted" })) {
+    if (record.ownerUserId !== userId) continue;
     const duration = recordDurationMs(record);
     if (duration === null) continue;
     if (best === null || duration < best) best = duration;
@@ -888,78 +604,83 @@ function bestDurationMs(records, { ownerUserId = null, teamId = null } = {}) {
   return best;
 }
 
-function teamKey(teamId, teamName, division) {
-  return teamId || `name:${String(teamName || "").normalize("NFKC").trim().toLowerCase()}\0${division || ""}`;
+function handlePersonalScores(request, response) {
+  const user = currentUser(request);
+  const best = userBestDurationMs(user.id);
+  jsonBody(response, 200, {
+    schemaVersion: PERSONAL_SCORES_SCHEMA_VERSION,
+    user: platformUser(user),
+    bestDurationMs: best,
+    sources: {
+      blockly: { bestDurationMs: best }
+    },
+    authoritative: false
+  });
 }
 
-function buildAdminRows({ users, pythonRecords, blocklyRecords, assignments }) {
+function buildBlocklyAdminRows(users, records) {
   const teams = new Map();
-  const usersById = new Map(users.map(user => [user.id, user]));
-  for (const user of users) {
-    if (user.role === "admin" || !user.teamName) continue;
-    const assignment = assignments.find(item => item.members?.some(member => member.userId === user.id)) || null;
-    const id = assignment?.teamId || null;
-    const division = contract.divisionForGroup(user.group);
-    const key = teamKey(id, user.teamName, division);
-    const current = teams.get(key) || {
-      teamId: id,
-      teamName: user.teamName,
-      group: user.group,
-      division,
-      members: [],
-      maps: assignment?.maps || [],
-      pythonRecords: [],
-      blocklyRecords: []
-    };
-    current.members.push({ id: user.id, username: user.username, displayName: user.displayName });
-    teams.set(key, current);
-  }
-  for (const record of pythonRecords) {
-    if (record?.recordState !== "submitted") continue;
-    const owner = record.user || usersById.get(record.ownerUserId) || null;
-    const assignment = assignments.find(item => item.members?.some(member => member.userId === owner?.id)) || null;
-    const immutableTeamId = typeof record.teamId === "string" && teams.has(record.teamId)
-      ? record.teamId
-      : null;
-    const key = teamKey(immutableTeamId || assignment?.teamId || null, owner?.teamName, contract.divisionForGroup(owner?.group));
-    const team = teams.get(key);
-    if (team) team.pythonRecords.push(record);
-  }
-  for (const record of blocklyRecords) {
-    if (record?.recordState !== "submitted") continue;
-    const owner = record.user || usersById.get(record.ownerUserId) || null;
-    const recordTeamId = record.teamId || owner?.teamId || null;
-    const key = teamKey(recordTeamId, owner?.teamName, contract.divisionForGroup(owner?.group));
-    let team = teams.get(key);
-    if (!team && owner?.teamName) {
-      team = [...teams.values()].find(item => item.teamName === owner.teamName) || null;
+  const ensureTeam = (key, teamName, group) => {
+    if (!teams.has(key)) {
+      teams.set(key, {
+        teamId: key.startsWith("tea_") ? key : null,
+        teamName,
+        group,
+        members: [],
+        bestDurationMs: null
+      });
     }
-    if (team) team.blocklyRecords.push(record);
+    return teams.get(key);
+  };
+
+  for (const user of users) {
+    if (user.role === "admin") continue;
+    const teamId = user.teamId || null;
+    const teamName = user.teamName || "";
+    if (!teamId && !teamName) continue;
+    const team = ensureTeam(teamId || `name:${teamName}`, teamName, user.group || "primary");
+    team.members.push({ id: user.id, username: user.username, displayName: user.displayName });
   }
-  return [...teams.values()].map(team => {
-    const pythonBestMs = bestDurationMs(team.pythonRecords);
-    const blocklyBestMs = bestDurationMs(team.blocklyRecords);
-    const durations = [pythonBestMs, blocklyBestMs].filter(Number.isFinite);
-    return {
+
+  for (const record of records) {
+    if (record?.recordState !== "submitted") continue;
+    const duration = recordDurationMs(record);
+    if (duration === null) continue;
+    const teamId = typeof record.ownerTeamId === "string" && record.ownerTeamId ? record.ownerTeamId : null;
+    const teamName = typeof record.ownerTeamName === "string" ? record.ownerTeamName : "";
+    const group = record.ownerGroup == null ? "primary" : record.ownerGroup;
+    let team = teams.get(teamId || (teamName ? `name:${teamName}` : `user:${record.ownerUserId}`));
+    if (!team && teamName) {
+      team = [...teams.values()].find(item => item.teamName === teamName) || null;
+    }
+    if (!team) {
+      team = ensureTeam(
+        teamId || (teamName ? `name:${teamName}` : `user:${record.ownerUserId}`),
+        teamName || record.ownerDisplayName || record.ownerUsername || record.ownerUserId,
+        group
+      );
+    }
+    if (team.bestDurationMs === null || duration < team.bestDurationMs) team.bestDurationMs = duration;
+  }
+
+  return [...teams.values()]
+    .map(team => ({
       teamId: team.teamId,
       teamName: team.teamName,
       group: team.group,
-      division: team.division,
       members: team.members,
-      maps: team.maps,
-      pythonBestMs,
-      blocklyBestMs,
-      bestDurationMs: durations.length ? Math.min(...durations) : null
-    };
-  }).sort((left, right) => {
-    if (left.bestDurationMs === null && right.bestDurationMs === null) {
-      return left.teamName.localeCompare(right.teamName, "zh-CN");
-    }
-    if (left.bestDurationMs === null) return 1;
-    if (right.bestDurationMs === null) return -1;
-    return left.bestDurationMs - right.bestDurationMs
-      || left.teamName.localeCompare(right.teamName, "zh-CN");
-  });
+      maps: [],
+      bestDurationMs: team.bestDurationMs
+    }))
+    .sort((left, right) => {
+      if (left.bestDurationMs === null && right.bestDurationMs === null) {
+        return left.teamName.localeCompare(right.teamName, "zh-CN");
+      }
+      if (left.bestDurationMs === null) return 1;
+      if (right.bestDurationMs === null) return -1;
+      return left.bestDurationMs - right.bestDurationMs
+        || left.teamName.localeCompare(right.teamName, "zh-CN");
+    });
 }
 
 function paginate(items, requestedPage, pageSize = ADMIN_PAGE_SIZE) {
@@ -976,152 +697,14 @@ function paginate(items, requestedPage, pageSize = ADMIN_PAGE_SIZE) {
   };
 }
 
-async function jsonFromService(origin, requestPath, request, headers = {}, label = "子系统") {
-  const result = await rawUpstreamRequest(origin, requestPath, {
-    headers: { accept: "application/json", cookie: forwardedCookie(request), ...headers }
-  });
-  if (result.statusCode !== 200) {
-    if ([401, 403].includes(result.statusCode)) throw new PlatformHttpError(result.statusCode, "UPSTREAM_ACCESS_DENIED", `${label}拒绝了当前账户。`);
-    throw new PlatformHttpError(503, "UPSTREAM_UNAVAILABLE", `${label}暂时不可用。`);
-  }
-  return parseUpstreamJson(result, label);
-}
-
-async function allRecordPagesFromService(origin, requestPath, request, headers = {}, label = "成绩子系统") {
-  const pageSize = 1000;
-  const separator = requestPath.includes("?") ? "&" : "?";
-  const first = await jsonFromService(
-    origin,
-    `${requestPath}${separator}page=1&pageSize=${pageSize}`,
-    request,
-    headers,
-    label
-  );
-  if (!Array.isArray(first.records)) {
-    throw new PlatformHttpError(502, "UPSTREAM_INVALID_RESPONSE", `${label}返回了不完整的成绩列表。`);
-  }
-  const totalPages = Number(first.pagination?.totalPages);
-  if (!Number.isSafeInteger(totalPages) || totalPages <= 1) return first.records;
-  if (totalPages > 20) {
-    throw new PlatformHttpError(503, "UPSTREAM_RESULT_TOO_LARGE", `${label}成绩数量超过后台汇总上限。`);
-  }
-  const remaining = await Promise.all(Array.from({ length: totalPages - 1 }, (_, index) =>
-    jsonFromService(
-      origin,
-      `${requestPath}${separator}page=${index + 2}&pageSize=${pageSize}`,
-      request,
-      headers,
-      label
-    )));
-  const pages = [first, ...remaining];
-  if (pages.some((page, index) => !Array.isArray(page.records)
-    || Number(page.pagination?.page) !== index + 1
-    || Number(page.pagination?.totalPages) !== totalPages)) {
-    throw new PlatformHttpError(502, "UPSTREAM_INVALID_RESPONSE", `${label}分页成绩响应不一致。`);
-  }
-  return pages.flatMap(page => page.records);
-}
-
-async function adminPythonRecords(request, options) {
-  return allRecordPagesFromService(options.upstreams.python, "/api/v1/admin/records", request, {}, "Python 赛题");
-}
-
-async function adminBlocklyRecords(request, options, principalHeader) {
-  return allRecordPagesFromService(options.upstreams.blockly, "/api/admin/records", request, {
-    [contract.PRINCIPAL_HEADER]: principalHeader
-  }, "Blockly 赛题");
-}
-
-async function handlePlatformMe(request, response, options) {
-  const user = await pythonCurrentUser(request, options);
-  // The browser only needs the SSO-origin flag, never the official identity.
-  const storedUser = user.role === "user"
-    ? authStoreUserIndex(readAuthStore(options.authStorePath)).get(user.id)
+function handleAdminOverview(request, response, url) {
+  requireAdmin(currentUser(request));
+  const rows = buildBlocklyAdminRows(store.listUsers(), store.allRecords({ recordState: "submitted" }));
+  const requestedGroup = url.searchParams.get("group");
+  const group = requestedGroup === "primary" || requestedGroup === "junior" || requestedGroup === "high"
+    ? requestedGroup
     : null;
-  jsonBody(response, 200, {
-    schemaVersion: PLATFORM_SCHEMA_VERSION,
-    authenticated: true,
-    user: {
-      ...user,
-      officialSso: Boolean(storedUser?.officialUserId)
-    },
-    services: {
-      python: "/python/",
-      blockly: "/blockly/",
-      admin: user.role === "admin" ? "/admin.html" : null
-    },
-    authoritative: false
-  });
-}
-
-async function handlePersonalScores(request, response, options) {
-  const user = await pythonCurrentUser(request, options);
-  const principalHeader = signedPrincipal(options, "blockly", user);
-  // Attach the all-settled handlers before awaiting the Blockly map bundle.
-  // Previously the Python record request was started while evaluating the
-  // Promise.allSettled argument list, then map-bundle construction awaited
-  // three Python requests.  If the first record request timed out in that
-  // gap, Node treated its rejection as unhandled and terminated the gateway.
-  // Each source is intentionally independent: a slow score source must only
-  // make that source unavailable for this response, never take down the
-  // platform gateway.
-  const pythonRecords = allRecordPagesFromService(
-    options.upstreams.python,
-    "/api/v1/records",
-    request,
-    {},
-    "Python 赛题"
-  );
-  const blocklyRecords = blocklyMapsForRequest(request, options, user)
-    .then(maps => allRecordPagesFromService(options.upstreams.blockly, "/api/records", request, {
-      [contract.PRINCIPAL_HEADER]: principalHeader,
-      [contract.MAP_BUNDLE_HEADER]: signedMapBundle(options, maps)
-    }, "Blockly 赛题"));
-  const [pythonResult, blocklyResult] = await Promise.allSettled([pythonRecords, blocklyRecords]);
-  const pythonBestMs = pythonResult.status === "fulfilled"
-    ? bestDurationMs(pythonResult.value, { ownerUserId: user.id })
-    : null;
-  const blocklyBestMs = blocklyResult.status === "fulfilled"
-    ? bestDurationMs(blocklyResult.value)
-    : null;
-  const durations = [pythonBestMs, blocklyBestMs].filter(Number.isFinite);
-  jsonBody(response, 200, {
-    schemaVersion: PERSONAL_SCORES_SCHEMA_VERSION,
-    user,
-    bestDurationMs: durations.length ? Math.min(...durations) : null,
-    sources: {
-      python: { bestDurationMs: pythonBestMs },
-      blockly: { bestDurationMs: blocklyBestMs }
-    },
-    authoritative: false
-  });
-}
-
-async function handleAdminOverview(request, response, options, url) {
-  const admin = requireAdmin(await pythonCurrentUser(request, options));
-  const blocklyPrincipal = signedPrincipal(options, "blockly", admin);
-  const [usersPayload, pythonRecords, mapPayload, blocklyRecords] = await Promise.all([
-    jsonFromService(options.upstreams.python, "/api/v1/admin/users", request, {}, "Python 用户后台"),
-    adminPythonRecords(request, options),
-    jsonFromService(options.upstreams.python, "/api/v1/admin/map-pools", request, {}, "Python 地图后台"),
-    adminBlocklyRecords(request, options, blocklyPrincipal)
-  ]);
-  const rows = buildAdminRows({
-    users: usersPayload.users || [],
-    pythonRecords,
-    blocklyRecords,
-    assignments: mapPayload.assignments || []
-  });
-  const requestedGroups = url.searchParams.getAll("group");
-  const requestedGroup = requestedGroups.length === 0 || requestedGroups[0] === ""
-    ? null
-    : contract.canonicalParticipantGroup(requestedGroups[0]);
-  if (requestedGroups.length > 1 || (requestedGroups.length === 1 && requestedGroups[0] !== "" && !requestedGroup)) {
-    throw new PlatformHttpError(400, "ADMIN_OVERVIEW_INVALID_GROUP", "分组筛选值无效。");
-  }
-  const filteredRows = requestedGroup
-    ? rows.filter(team => contract.canonicalParticipantGroup(team.group) === requestedGroup)
-    : rows;
+  const filteredRows = group ? rows.filter(team => team.group === group) : rows;
   const pageValue = Number(url.searchParams.get("page") || 1);
   const page = paginate(filteredRows, Number.isSafeInteger(pageValue) ? pageValue : 1);
   jsonBody(response, 200, {
@@ -1141,41 +724,9 @@ async function handleAdminOverview(request, response, options, url) {
     },
     teams: page.items,
     links: {
-      pythonMaps: "/python/admin.html#maps",
       blocklyRecords: "/blockly/admin.html?platform=1"
     },
     authoritative: false
-  });
-}
-
-async function handleAdminUsers(request, response, options) {
-  requireAdmin(await pythonCurrentUser(request, options));
-  const payload = await jsonFromService(
-    options.upstreams.python,
-    "/api/v1/admin/users",
-    request,
-    {},
-    "Python 用户后台"
-  );
-  const authStore = readAuthStore(options.authStorePath);
-  const storedById = authStoreUserIndex(authStore);
-  jsonBody(response, 200, {
-    schemaVersion: "chenlong.platform-admin-users/v1",
-    users: (payload.users || []).map(user => ({
-      ...user,
-      teamId: user.role === "admin" ? null : storedById.get(user.id)?.teamId || null,
-      officialUserId: user.role === "admin" ? null : storedById.get(user.id)?.officialUserId || null,
-      officialTeamId: user.role === "admin" ? null : storedById.get(user.id)?.officialTeamId || null
-    })),
-    authoritative: false
-  });
-}
-
-async function handleAdminUserUpdate(request, response, options, userId) {
-  requireAdmin(await pythonCurrentUser(request, options));
-  await proxyBuffered(request, response, options, {
-    scope: "python",
-    upstreamPath: `/api/v1/admin/users/${userId}`
   });
 }
 
@@ -1191,28 +742,18 @@ function formatDurationSeconds(ms) {
 }
 
 function adminRowsCsv(rows) {
-  const header = ["队伍名称", "分组", "用时(秒)", "任务1地图"];
+  const header = ["队伍名称", "分组", "用时(秒)"];
   const data = rows.map(team => [
     team.teamName,
-    PARTICIPANT_GROUP_LABELS[contract.canonicalParticipantGroup(team.group)] || "",
-    formatDurationSeconds(team.bestDurationMs),
-    team.maps.find(map => contract.platformTaskId(map.taskId) === "task1")?.variantNumber || ""
+    PARTICIPANT_GROUP_LABELS[team.group] || "",
+    formatDurationSeconds(team.bestDurationMs)
   ]);
   return `\uFEFF${[header, ...data].map(row => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }
 
-async function handleAdminExport(request, response, options) {
-  const admin = requireAdmin(await pythonCurrentUser(request, options));
-  const [usersPayload, pythonRecords, mapPayload, blocklyRecords] = await Promise.all([
-    jsonFromService(options.upstreams.python, "/api/v1/admin/users", request),
-    adminPythonRecords(request, options),
-    jsonFromService(options.upstreams.python, "/api/v1/admin/map-pools", request),
-    adminBlocklyRecords(request, options, signedPrincipal(options, "blockly", admin))
-  ]);
-  const rows = buildAdminRows({
-    users: usersPayload.users || [], pythonRecords,
-    blocklyRecords, assignments: mapPayload.assignments || []
-  });
+function handleAdminExport(request, response) {
+  requireAdmin(currentUser(request));
+  const rows = buildBlocklyAdminRows(store.listUsers(), store.allRecords({ recordState: "submitted" }));
   const body = Buffer.from(adminRowsCsv(rows), "utf8");
   response.writeHead(200, {
     "Content-Type": "text/csv; charset=utf-8",
@@ -1223,155 +764,285 @@ async function handleAdminExport(request, response, options) {
   response.end(body);
 }
 
+function handleAdminUsers(request, response) {
+  requireAdmin(currentUser(request));
+  jsonBody(response, 200, {
+    schemaVersion: ADMIN_USERS_SCHEMA_VERSION,
+    users: store.listUsers().map(adminUserSummary),
+    authoritative: false
+  });
+}
+
+async function handleAdminUserUpdate(request, response, userId) {
+  requireAdmin(currentUser(request));
+  const body = await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  assertAllowedFields(body, new Set(["teamName", "group"]), "USER_UPDATE");
+  const result = auth.updateManagedUser(userId, { teamName: body.teamName, group: body.group });
+  const updated = store.findUserById(userId);
+  jsonBody(response, 200, {
+    schemaVersion: ADMIN_USERS_SCHEMA_VERSION,
+    user: adminUserSummary(updated),
+    changed: result.changed,
+    authoritative: false
+  });
+}
+
+// ---- 外部 SSO ----
+
+const SSO_RATE_WINDOW_MS = 5 * 60 * 1000;
+const MAX_SSO_ATTEMPTS = 4_000;
+const MAX_SSO_ATTEMPTS_PER_IP = 1_000;
+let ssoAttempts = { count: 0, resetAt: 0 };
+const ssoAttemptsByIp = new Map();
+
+function enforceSsoRateLimit(ip, now) {
+  if (!Number.isFinite(now)) throw new TypeError("official SSO rate-limit clock is invalid");
+  if (ssoAttempts.resetAt <= now) {
+    ssoAttempts = { count: 0, resetAt: now + SSO_RATE_WINDOW_MS };
+    ssoAttemptsByIp.clear();
+  }
+  const key = String(ip || "unknown").slice(0, 128);
+  let entry = ssoAttemptsByIp.get(key);
+  if (!entry || entry.resetAt <= now) {
+    entry = { count: 0, resetAt: now + SSO_RATE_WINDOW_MS };
+    ssoAttemptsByIp.set(key, entry);
+  }
+  if (ssoAttempts.count >= MAX_SSO_ATTEMPTS || entry.count >= MAX_SSO_ATTEMPTS_PER_IP) {
+    const retryAt = Math.min(ssoAttempts.resetAt, entry.resetAt);
+    const limited = new OfficialSsoError(1004, "official SSO rate limit exceeded");
+    limited.statusCode = 429;
+    limited.retryAfter = Math.max(1, Math.ceil((retryAt - now) / 1000));
+    limited.rateLimited = true;
+    throw limited;
+  }
+  ssoAttempts.count += 1;
+  entry.count += 1;
+}
+
+function writeOfficialSsoErrorPage(response, error) {
+  const normalized = error instanceof OfficialSsoError ? error : new OfficialSsoError(1004);
+  const body = Buffer.from([
+    "<!doctype html><html lang=\"zh-CN\"><head><meta charset=\"utf-8\">",
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+    "<title>无法进入比赛平台</title></head><body>",
+    "<main><h1>无法进入比赛平台</h1>",
+    `<p>${normalized.message}</p><p>错误码：${normalized.code}</p>`,
+    "<p><a href=\"/login.html\">返回登录页</a></p></main></body></html>"
+  ].join(""), "utf8");
+  const headers = {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Length": body.length,
+    "Cache-Control": "no-store, max-age=0",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY"
+  };
+  if (Number.isSafeInteger(normalized.retryAfter) && normalized.retryAfter > 0) {
+    headers["Retry-After"] = String(normalized.retryAfter);
+  }
+  response.writeHead(normalized.statusCode, headers);
+  response.end(body);
+}
+
+async function handleSsoJump(request, response, trustedProxyIps) {
+  if (request.method !== "GET") {
+    writeOfficialSsoErrorPage(response, new OfficialSsoError(1001, "SSO endpoint only accepts GET"));
+    return;
+  }
+  const ip = clientIpForRequest(request, trustedProxyIps);
+  let parameters = null;
+  try {
+    enforceSsoRateLimit(ip, Date.now());
+    if (officialSsoSecret === null || officialSsoReplayStore === null) {
+      throw new OfficialSsoError(1004, "official SSO is not configured");
+    }
+    parameters = verifySsoRequest(request.url, officialSsoSecret, Date.now());
+    const authenticated = await officialSsoReplayStore.consume(parameters, () => (
+      auth.loginExternalIdentity({
+        officialUserId: parameters.user_id,
+        officialTeamId: parameters.team_id,
+        group: parameters.group_type,
+        teamName: parameters.team_name
+      })
+    ));
+    await officialSsoReplayStore.audit({
+      userId: parameters.user_id,
+      sourceTimestamp: parameters.timestamp,
+      ip,
+      result: "success"
+    }).catch(() => {});
+    response.writeHead(302, {
+      Location: "/portal.html",
+      "Set-Cookie": authCookie(authenticated.token, auth.sessionTtlMs / 1000, { sameSite: "Lax" }),
+      "Cache-Control": "no-store, max-age=0",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff"
+    });
+    response.end();
+  } catch (error) {
+    const publicError = error instanceof OfficialSsoError
+      ? error
+      : new OfficialSsoError(1004, error instanceof AuthStoreError ? error.code : "SSO processing failed");
+    if (officialSsoReplayStore !== null && !publicError.rateLimited) {
+      await officialSsoReplayStore.audit({
+        userId: parameters?.user_id || null,
+        sourceTimestamp: parameters?.timestamp || null,
+        ip,
+        result: "failure",
+        code: publicError.code,
+        detail: publicError.detail
+      }).catch(() => {});
+    }
+    writeOfficialSsoErrorPage(response, publicError);
+  }
+}
+
+// ---- 健康检查 ----
+
+function handleHealth(request, response) {
+  jsonBody(response, 200, {
+    schemaVersion: PLATFORM_SCHEMA_VERSION,
+    status: "ok",
+    service: "chenlong-competition-platform",
+    port: DEFAULT_PORT,
+    capacity: {
+      maxAccounts: auth.maxUsers,
+      plannedConcurrentUsers: 500,
+      adminTeamPageSize: ADMIN_PAGE_SIZE
+    },
+    competition: {
+      authoritative: false
+    },
+    authoritative: false
+  });
+}
+
+function handleReadiness(request, response, options) {
+  jsonBody(response, 200, {
+    schemaVersion: PLATFORM_READINESS_SCHEMA_VERSION,
+    status: "ok",
+    service: "chenlong-competition-platform",
+    checks: {
+      gateway: { status: "ok" },
+      blockly: { status: "ok" }
+    },
+    configuration: {
+      trustedProxyConfigured: options.trustedProxyIps.size > 0,
+      publicOriginConfigured: Boolean(options.publicOrigin),
+      officialSsoConfigured: officialSsoSecret !== null
+    },
+    authoritative: false
+  });
+}
+
+// ---- 错误处理 ----
+
+function errorInfo(error) {
+  if (error instanceof PlatformHttpError) {
+    return { statusCode: error.statusCode, code: error.code, message: error.message, headers: error.headers || {} };
+  }
+  if (error instanceof HttpError) {
+    return { statusCode: error.status, code: error.code, message: error.message, headers: {} };
+  }
+  if (error instanceof AuthStoreError) {
+    return { statusCode: error.statusCode, code: error.code, message: error.message, headers: error.headers || {} };
+  }
+  if (error && Number.isInteger(error.statusCode) && typeof error.code === "string") {
+    return { statusCode: error.statusCode, code: error.code, message: error.message, headers: error.headers || {} };
+  }
+  return { statusCode: 500, code: "PLATFORM_ERROR", message: "统一平台暂时无法完成请求。", headers: {} };
+}
+
+// ---- 服务入口 ----
+
 function createServer(config = {}) {
   const options = {
-    upstreams: {
-      python: normalizedUpstream(config.pythonOrigin || process.env.CHENLONG_PYTHON_ORIGIN, DEFAULT_UPSTREAMS.python),
-      blockly: normalizedUpstream(config.blocklyOrigin || process.env.CHENLONG_BLOCKLY_ORIGIN, DEFAULT_UPSTREAMS.blockly),
-      workshop: normalizedUpstream(config.workshopOrigin || process.env.CHENLONG_WORKSHOP_ORIGIN, DEFAULT_UPSTREAMS.workshop)
-    },
     publicOrigin: normalizedPublicOrigin(config.publicOrigin || process.env.CHENLONG_PLATFORM_PUBLIC_ORIGIN),
-    authStorePath: path.resolve(config.authStorePath || process.env.CHENLONG_PYTHON_AUTH_STORE || DEFAULT_AUTH_STORE),
     publicDir: path.resolve(config.publicDir || path.join(__dirname, "public")),
-    secret: platformSecret(config.secret),
-    now: typeof config.now === "function" ? config.now : Date.now,
     trustedProxyIps: normalizedTrustedProxyIps(
       config.trustedProxyIps ?? process.env.CHENLONG_PLATFORM_TRUSTED_PROXIES
     )
   };
-  if (config.scoreDownloadService) {
-    options.scoreDownloadService = config.scoreDownloadService;
-  } else {
-    const scoreDownloadConfig = config.scoreDownload || {};
-    const scoreDownloadEnvironment = scoreDownloadConfig.env || process.env;
-    const snapshotConfigured = Boolean(
-      scoreDownloadConfig.snapshotPath || scoreDownloadEnvironment.CHENLONG_SCORE_DOWNLOAD_SNAPSHOT_PATH
-    );
-    const explicitScoreDataSource = scoreDownloadConfig.scoreDataSource || config.scoreDataSource;
-    const scoreDataSource = explicitScoreDataSource || (!snapshotConfigured
-      ? liveScores.createLiveScoreDataSource({
-        upstreams: options.upstreams,
-        secret: options.secret,
-        authStorePath: options.authStorePath,
-        promotionFile: scoreDownloadConfig.promotionFile
-      })
-      : null);
-    options.scoreDownloadService = officialScores.createScoreDownloadService({
-      ...scoreDownloadConfig,
-      publicOrigin: scoreDownloadConfig.publicOrigin || options.publicOrigin || undefined,
-      ...(scoreDataSource ? { scoreDataSource } : {}),
-      identityDataSource: scoreDownloadConfig.identityDataSource || config.scoreIdentityDataSource
-    });
-  }
 
   const server = http.createServer(async (request, response) => {
     try {
       const url = new URL(request.url, requestExternalOrigin(request, options.publicOrigin));
       const pathname = safePathname(url.pathname);
-      // Reject closed submissions before authentication or body buffering, and
-      // check once more in proxyBuffered after a potentially long upload.
-      assertCompetitionSubmissionOpen(request, options, pathname);
-      if (pathname === officialScores.BATCH_PATH || pathname.startsWith(officialScores.DOWNLOAD_PATH_PREFIX)) {
-        await options.scoreDownloadService.handle(request, response, {
-          pathname,
-          externalOrigin: requestExternalOrigin(request, options.publicOrigin)
-        });
-        return;
-      }
+
       if (pathname === "/sso/jump") {
-        await proxyPythonAuth(
-          request,
-          response,
-          options,
-          `/api/v1/auth/sso/jump${url.search}`,
-          { "x-forwarded-for": clientIpForRequest(request, options.trustedProxyIps) }
-        );
+        await handleSsoJump(request, response, options.trustedProxyIps);
         return;
       }
+
       if (request.method === "GET" || request.method === "HEAD") {
         if (servePublic(request, response, options.publicDir, pathname)) return;
       }
 
       if (pathname === "/api/health" && ["GET", "HEAD"].includes(request.method)) {
-        jsonBody(response, 200, {
-          schemaVersion: PLATFORM_SCHEMA_VERSION,
-          status: "ok",
-          service: "chenlong-competition-platform",
-        federationKeyId: crypto.createHash("sha256").update(options.secret, "utf8").digest("hex").slice(0, 16),
-        trustedProxyCount: options.trustedProxyIps.size,
-          port: DEFAULT_PORT,
-          capacity: {
-            maxAccounts: 2_000,
-            plannedConcurrentUsers: 500,
-            upstreamMaxSocketsPerService: UPSTREAM_AGENT.maxSockets,
-            listenBacklog: 2_048,
-            adminTeamPageSize: ADMIN_PAGE_SIZE
-          },
-          competition: competitionWindow.publicSubmissionWindow(competitionClockNow(options)),
-          authoritative: false
-        });
+        handleHealth(request, response);
         return;
       }
       if (pathname === "/api/readiness" && ["GET", "HEAD"].includes(request.method)) {
-        const readiness = await platformReadiness(options);
-        jsonBody(response, readiness.statusCode, readiness.payload);
-        return;
-      }
-      if (pathname === "/api/platform/me" && request.method === "GET") {
-        await handlePlatformMe(request, response, options);
-        return;
-      }
-      if (pathname === "/api/platform/scores/me" && request.method === "GET") {
-        await handlePersonalScores(request, response, options);
-        return;
-      }
-      if (pathname === "/api/platform/admin/overview" && request.method === "GET") {
-        await handleAdminOverview(request, response, options, url);
-        return;
-      }
-      if (pathname === "/api/platform/admin/export" && request.method === "GET") {
-        await handleAdminExport(request, response, options);
-        return;
-      }
-      if (pathname === "/api/platform/admin/users" && request.method === "GET") {
-        await handleAdminUsers(request, response, options);
-        return;
-      }
-      const platformAdminUserMatch = pathname.match(/^\/api\/platform\/admin\/users\/(usr_[a-f0-9]{32})$/);
-      if (platformAdminUserMatch && request.method === "PATCH") {
-        await handleAdminUserUpdate(request, response, options, platformAdminUserMatch[1]);
-        return;
-      }
-      if (pathname === "/api/platform/team-invite" && request.method === "GET") {
-        await pythonCurrentUser(request, options);
-        await proxyPythonAuth(request, response, options, "/api/v1/auth/team-invite");
+        handleReadiness(request, response, options);
         return;
       }
 
-      if (pathname.startsWith("/api/v1/auth/")) {
-        await proxyPythonAuth(request, response, options, pathname);
+      if (pathname === "/api/v1/auth/guest" && request.method === "POST") {
+        await handleAuthGuest(request, response);
         return;
       }
-      if (pathname.startsWith("/python/")) {
-        const upstreamPath = `${pathname.slice("/python".length)}${url.search}`;
-        if (STATIC_STREAM_PATH_PATTERN.test(pathname)) {
-          await proxyStreamed(request, response, options, {
-            scope: "python",
-            upstreamPath,
-            cacheControl: "public, max-age=86400"
-          });
-          return;
-        }
-        const cacheControl = textAssetCacheControl(pathname, url.searchParams);
-        await proxyBuffered(request, response, options, {
-          scope: "python",
-          upstreamPath,
-          cacheControl,
-          headAsGet: cacheControl.startsWith("public,"),
-          timeoutMs: pathname.includes("/api/") ? 120_000 : 15_000
-        });
+      if (pathname === "/api/v1/auth/login" && request.method === "POST") {
+        await handleAuthLogin(request, response);
         return;
       }
+      if (pathname === "/api/v1/auth/register" && request.method === "POST") {
+        await handleAuthRegister(request, response);
+        return;
+      }
+      if (pathname === "/api/v1/auth/logout" && request.method === "POST") {
+        await handleAuthLogout(request, response);
+        return;
+      }
+      if (pathname === "/api/v1/auth/me" && request.method === "GET") {
+        handleAuthMe(request, response);
+        return;
+      }
+      if (pathname === "/api/v1/auth/team-invite" && request.method === "GET") {
+        handleAuthTeamInvite(request, response);
+        return;
+      }
+
+      if (pathname === "/api/platform/me" && request.method === "GET") {
+        handlePlatformMe(request, response);
+        return;
+      }
+      if (pathname === "/api/platform/team-invite" && request.method === "GET") {
+        handlePlatformTeamInvite(request, response);
+        return;
+      }
+      if (pathname === "/api/platform/scores/me" && request.method === "GET") {
+        handlePersonalScores(request, response);
+        return;
+      }
+      if (pathname === "/api/platform/admin/overview" && request.method === "GET") {
+        handleAdminOverview(request, response, url);
+        return;
+      }
+      if (pathname === "/api/platform/admin/export" && request.method === "GET") {
+        handleAdminExport(request, response);
+        return;
+      }
+      if (pathname === "/api/platform/admin/users" && request.method === "GET") {
+        handleAdminUsers(request, response);
+        return;
+      }
+      const adminUserMatch = pathname.match(/^\/api\/platform\/admin\/users\/(usr_[a-f0-9]{32})$/);
+      if (adminUserMatch && request.method === "PATCH") {
+        await handleAdminUserUpdate(request, response, adminUserMatch[1]);
+        return;
+      }
+
       if (pathname === "/blockly/login.html" && ["GET", "HEAD"].includes(request.method)) {
         response.writeHead(302, {
           Location: "/login.html?returnTo=%2Fblockly%2F",
@@ -1380,76 +1051,18 @@ function createServer(config = {}) {
         response.end();
         return;
       }
-      if (pathname === "/blockly/api/maps" && request.method === "GET") {
-        const user = await pythonCurrentUser(request, options);
-        jsonBody(response, 200, {
-          schemaVersion: MAPS_SCHEMA_VERSION,
-          maps: await blocklyMapsForRequest(request, options, user),
-          authoritative: false
-        });
-        return;
-      }
-      if (pathname === "/blockly/api/auth/me" && request.method === "GET") {
-        const user = await pythonCurrentUser(request, options);
-        jsonBody(response, 200, {
-          schemaVersion: "chenlong.blockly-auth/v1",
-          authenticated: true,
-          user: { ...user, teamId: undefined },
-          authoritative: false
-        });
-        return;
-      }
-      if (pathname === "/blockly/api/auth/team-invite" && request.method === "GET") {
-        const user = await pythonCurrentUser(request, options);
-        if (user.role === "admin") throw new PlatformHttpError(403, "ADMIN_HAS_NO_TEAM", "管理员账户没有队伍邀请码。");
-        const result = await jsonFromService(options.upstreams.python, "/api/v1/auth/team-invite", request);
-        jsonBody(response, 200, {
-          schemaVersion: "chenlong.blockly-team-invite/v1",
-          teamName: result.teamName,
-          inviteCode: result.inviteCode,
-          authoritative: false
-        });
-        return;
-      }
-      if (pathname === "/blockly/api/auth/logout" && request.method === "POST") {
-        assertExternalOrigin(request, options.publicOrigin);
-        const body = await readIncomingBody(request, MAX_AUTH_PROXY_BODY_BYTES);
-        const result = await rawUpstreamRequest(options.upstreams.python, "/api/v1/auth/logout", {
-          method: "POST",
-          headers: copyRequestHeaders(request, { origin: options.publicOrigin || options.upstreams.python }),
-          body: body.length ? body : Buffer.from("{}")
-        });
-        const headers = responseHeadersForClient(result.headers, "python");
-        response.writeHead(result.statusCode === 200 ? 204 : result.statusCode, headers);
-        response.end();
+      if (pathname.startsWith("/blockly/api/")) {
+        const blocklyUrl = new URL(
+          pathname.slice("/blockly".length) + url.search,
+          requestExternalOrigin(request, options.publicOrigin)
+        );
+        await blocklyApi.handle(request, response, blocklyUrl);
         return;
       }
       if (pathname.startsWith("/blockly/")) {
-        const isApiRequest = pathname.startsWith("/blockly/api/");
-        const user = isApiRequest ? await pythonCurrentUser(request, options) : null;
-        const needsMapBundle = pathname === "/blockly/api/records" && request.method === "POST";
-        const upstreamPath = `${pathname.slice("/blockly".length)}${url.search}`;
-        if (!isApiRequest && STATIC_STREAM_PATH_PATTERN.test(pathname)) {
-          await proxyStreamed(request, response, options, {
-            scope: "blockly",
-            upstreamPath,
-            cacheControl: "public, max-age=3600"
-          });
-          return;
-        }
-        const cacheControl = isApiRequest
-          ? "no-store, max-age=0"
-          : textAssetCacheControl(pathname, url.searchParams);
-        await proxyBuffered(request, response, options, {
-          scope: "blockly",
-          upstreamPath,
-          principal: user,
-          maps: needsMapBundle ? await blocklyMapsForRequest(request, options, user) : null,
-          cacheControl,
-          headAsGet: cacheControl.startsWith("public,"),
-          timeoutMs: isApiRequest ? 120_000 : 15_000
-        });
-        return;
+        const relativePath = pathname.slice("/blockly".length) || "/";
+        if (serveBlockly(request, response, relativePath, url.searchParams)) return;
+        throw new PlatformHttpError(404, "NOT_FOUND", "页面不存在。");
       }
 
       throw new PlatformHttpError(404, "NOT_FOUND", "页面或接口不存在。");
@@ -1458,10 +1071,12 @@ function createServer(config = {}) {
         response.destroy();
         return;
       }
-      const statusCode = Number.isInteger(error?.statusCode) ? error.statusCode : 502;
-      const code = typeof error?.code === "string" ? error.code : "PLATFORM_ERROR";
-      const message = error instanceof PlatformHttpError ? error.message : "统一平台暂时无法完成请求。";
-      jsonBody(response, statusCode, platformError(code, message), error?.headers || {});
+      const info = errorInfo(error);
+      jsonBody(response, info.statusCode, {
+        schemaVersion: PLATFORM_SCHEMA_VERSION,
+        authoritative: false,
+        error: { code: info.code, message: info.message }
+      }, info.headers);
     }
   });
   server.headersTimeout = 15_000;
@@ -1491,27 +1106,20 @@ if (require.main === module) startServer();
 
 module.exports = {
   PLATFORM_SCHEMA_VERSION,
+  PLATFORM_READINESS_SCHEMA_VERSION,
   ADMIN_OVERVIEW_SCHEMA_VERSION,
   PERSONAL_SCORES_SCHEMA_VERSION,
   DEFAULT_HOST,
   DEFAULT_PORT,
-  DEFAULT_UPSTREAMS,
   ADMIN_PAGE_SIZE,
+  MAX_DURATION_MS,
   PlatformHttpError,
-  assertExternalOrigin,
   normalizedIp,
   normalizedTrustedProxyIps,
   clientIpForRequest,
-  assertCompetitionSubmissionOpen,
-  mapLayoutForBlockly,
-  assignedVariantId,
-  MAX_DURATION_MS,
   recordDurationMs,
-  bestDurationMs,
-  buildAdminRows,
+  buildBlocklyAdminRows,
   paginate,
-  rewriteLocation,
-  rewriteTextBody,
   createServer,
   startServer
 };
