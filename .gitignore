@@ -29,6 +29,9 @@ Thumbs.db
 *.p12
 *.pfx
 
+# 测试脚本内嵌官网 SSO 签名密钥，勿入库
+generate_test_jump.py
+
 # Formal competition identities, scores, sessions and recovery archives
 /record-backups/
 /data/legacy-id-map.json

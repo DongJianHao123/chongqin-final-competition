@@ -114,6 +114,17 @@ const SCHEMA_SQL = `
     layout_json TEXT NOT NULL,
     PRIMARY KEY (task_id, revision)
   ) STRICT;
+
+  CREATE TABLE IF NOT EXISTS record_judgments (
+    record_id TEXT PRIMARY KEY NOT NULL,
+    task_completed INTEGER NOT NULL,
+    distractor1_cleared INTEGER NOT NULL,
+    distractor2_cleared INTEGER NOT NULL,
+    target_picked INTEGER NOT NULL,
+    target_delivered INTEGER NOT NULL,
+    scored_at TEXT NOT NULL,
+    scored_by_user_id TEXT NOT NULL
+  ) STRICT;
 `;
 
 function rowToUser(row) {
@@ -165,6 +176,20 @@ function rowToMapVersion(row) {
     updatedAt: row.updated_at,
     updatedByUserId: row.updated_by_user_id,
     layout: JSON.parse(row.layout_json)
+  };
+}
+
+function rowToJudgment(row) {
+  if (!row) return null;
+  return {
+    recordId: row.record_id,
+    taskCompleted: row.task_completed === 1,
+    distractor1Cleared: row.distractor1_cleared === 1,
+    distractor2Cleared: row.distractor2_cleared === 1,
+    targetPicked: row.target_picked === 1,
+    targetDelivered: row.target_delivered === 1,
+    scoredAt: row.scored_at,
+    scoredByUserId: row.scored_by_user_id
   };
 }
 
@@ -561,6 +586,49 @@ class PlatformStore {
       ) WHERE owner_row = 1
     `).all();
     return rows.map(parsedRecord).filter(record => !excludedOwnerIds.has(record.ownerUserId));
+  }
+
+  // ---- record judgments ----
+  findRecordJudgment(recordId) {
+    return rowToJudgment(this.database.prepare(
+      "SELECT * FROM record_judgments WHERE record_id = ? LIMIT 1"
+    ).get(recordId));
+  }
+
+  upsertRecordJudgment(recordId, judgment) {
+    const booleanValue = value => (value === true ? 1 : 0);
+    this.database.prepare(`
+      INSERT INTO record_judgments (record_id, task_completed, distractor1_cleared, distractor2_cleared,
+        target_picked, target_delivered, scored_at, scored_by_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(record_id) DO UPDATE SET
+        task_completed = excluded.task_completed,
+        distractor1_cleared = excluded.distractor1_cleared,
+        distractor2_cleared = excluded.distractor2_cleared,
+        target_picked = excluded.target_picked,
+        target_delivered = excluded.target_delivered,
+        scored_at = excluded.scored_at,
+        scored_by_user_id = excluded.scored_by_user_id
+    `).run(
+      recordId,
+      booleanValue(judgment.taskCompleted),
+      booleanValue(judgment.distractor1Cleared),
+      booleanValue(judgment.distractor2Cleared),
+      booleanValue(judgment.targetPicked),
+      booleanValue(judgment.targetDelivered),
+      judgment.scoredAt,
+      judgment.scoredByUserId
+    );
+    return { recordId, ...judgment };
+  }
+
+  listRecordJudgments() {
+    const result = new Map();
+    for (const row of this.database.prepare("SELECT * FROM record_judgments").all()) {
+      const judgment = rowToJudgment(row);
+      result.set(judgment.recordId, judgment);
+    }
+    return result;
   }
 
   // ---- workspaces ----

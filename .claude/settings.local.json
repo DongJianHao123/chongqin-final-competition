@@ -21,7 +21,30 @@
       "Bash(fi)",
       "Bash(cd:*)",
       "Bash(node -e \":*)",
-      "Bash(grep -rnE \"detect|observe|approach|sees|centered|distance_to|direction|robotRuntime|createRobot|makeRobot|visionQuery|primaryVision\" projects/blockly-page3/*.js)"
+      "Bash(grep -rnE \"detect|observe|approach|sees|centered|distance_to|direction|robotRuntime|createRobot|makeRobot|visionQuery|primaryVision\" projects/blockly-page3/*.js)",
+      "Bash(find projects/car-python -maxdepth 2 -type d -name *.runtime -o -maxdepth 2 -type d -name *data*)",
+      "Bash(echo \"$f OK\")",
+      "Bash(echo \"$f FAIL\")",
+      "Bash(grep -rn \"score-download\" --include=*.js .)",
+      "Bash(grep -rn \"live-score-source\" --include=*.js .)",
+      "Bash(grep -rn \"internal-service-auth\" --include=*.js .)",
+      "Bash(grep -rn \"platform-contract\" --include=*.js .)",
+      "Bash(do echo:*)",
+      "Read(//e/Project/工作空间/ai/zheng/competition-platform/tools/**)",
+      "Bash(grep -rn \"blockly-record-store\\\\|blockly-workspace-store\" --include=*.js .)",
+      "Bash(npm run:*)",
+      "Bash(find . -maxdepth 3 -iname *generate* -not -path */node_modules/*)",
+      "Bash(curl -s http://127.0.0.1:6190/api/readiness)",
+      "Bash(curl -s -i http://127.0.0.1:6190/sso/jump)",
+      "Bash(CHENLONG_OFFICIAL_SSO_SECRET=\"7b90ef2225696335cc6268bf4bf89b4a19594016b08eb80ed2fca7dcc528fe43\" PORT=6399 node server.js)",
+      "Bash(COOKIE=\"chenlong_session=qZDmVvoDffJpOw_2U3WpWPFGhNhPz7fzkxIR1JL81ao\")",
+      "Bash(curl -s -H \"Cookie: $COOKIE\" http://127.0.0.1:6399/api/platform/me)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"http://127.0.0.1:6399/sso/jump?user_id=sso_test_001&team_id=req_test_001&group_type=primary&team_name=SSO%E6%B5%8B%E8%AF%95%E9%98%9F%E4%BC%8D&timestamp=1791511877&sign=c7300102d11ae62427bb5b17be6f3b1ead86a5c3196f8a7a313e6b5d2e41af07\")",
+      "Bash(curl -s http://127.0.0.1:6190/api/health)",
+      "Bash(netstat -ano)",
+      "Bash(CHENLONG_OFFICIAL_SSO_SECRET=\"7b90ef2225696335cc6268bf4bf89b4a19594016b08eb80ed2fca7dcc528fe43\" PORT=6190 node server.js)",
+      "Bash(node -e ':*)",
+      "Bash(curl -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:6190/blockly/assets/guangyang-island.png)"
     ]
   }
 }

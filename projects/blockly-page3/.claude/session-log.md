@@ -64,3 +64,12 @@ Blockly 决赛页：把「计分运行」改为「计时运行」（保留内部
 
 ## 2026-09-29 17:23
 Blockly 后台地图编辑器新增物品外观配置：目标物/混淆物样式可选 box/orange/tennis（默认橙子/网球）。改 guangyang-map-config.js（normalizeLayout 兼容带样式与旧版 key、DEFAULT_LAYOUTS 加样式）、admin.js（地图编辑加样式下拉）、app.js（normalizePackageRecords 保留 style、createPrimaryGuangyangMission 传入样式、getPackageAssets/createPackageModel 按样式渲染橙子球体+叶子与网球球体+白缝）。视觉识别仍按 role 分类，不受外观影响。node --check 通过。
+
+## 2026-09-30 15:26
+重配任务一地图：取消途径点、障碍物，改为 1 目标物 + 2 混淆物 + 1 目标点。改 guangyang-map-config.js（TASKS 用 targets/distractors/obstacles 显式计数、任务一 checkpoints 0/targets 1/distractors 2/obstacles 0、DEFAULT_LAYOUTS 同步、normalizeLayout 改点列表计数）、server.js（PRIMARY_TASKS 同结构、提交校验与 compositeTaskProgress 用新计数）、app.js（任务描述文案适配 0 途径点/0 障碍物、完成提示改通用）、admin.js（空「途径点」分组隐藏）。node --check 通过。
+
+## 2026-09-30 15:31
+决赛只保留 Blockly：地图编辑移入 Blockly 管理后台。admin.js 移除 platformMode 对地图页签/面板的隐藏并始终加载地图；server.js 让 /api/maps 与提交记录的地图版本核对一律使用本地地图存储(allCurrentMapConfigs/mapVersion)，不再走平台 SSO 地图包(platformMaps/platformMapVersion)。node --check 通过。
+
+## 2026-09-30 15:43
+修复后台地图数据与前台模拟器不一致：根因是磁盘 store(primary-blockly-store.json) 里任务一仍是旧布局(4途径点/1目标/1混淆/1障碍)，与代码新 TASKS(0途径点/1目标/2混淆/0障碍)不兼容，normalizeLayout 直接抛错。server.js 新增 createInitialMapConfig + reconcileMapConfigs，启动时对与当前 TASKS 不兼容的地图配置重新播种(从 defaultLayout 重建)。node --check 通过，需重启服务生效。

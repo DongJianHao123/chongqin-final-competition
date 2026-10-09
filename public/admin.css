@@ -301,8 +301,6 @@
 }
 .score-value.missing { color: #637d94; background: transparent; }
 .total-score { color: #ffe185; font-size: 17px; font-weight: 850; font-variant-numeric: tabular-nums; }
-.map-list { display: flex; flex-wrap: wrap; gap: 5px; min-width: 215px; }
-.map-tag,
 .group-badge,
 .role-badge {
   display: inline-flex;
@@ -313,10 +311,28 @@
   background: #0f3045;
   font-size: 11px;
 }
-.map-tag { padding: 4px 7px; }
 .group-badge,
 .role-badge { padding: 4px 9px; }
 .role-badge[data-role="admin"] { border-color: #665321; color: #ffd875; background: #342b11; }
+.record-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #28506c;
+  border-radius: 999px;
+  padding: 4px 10px;
+  color: #83d6e5;
+  background: #0f3045;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.record-badge[data-ok="true"] { border-color: #2e6959; color: #72d7b3; background: #0d322c; }
+.record-badge[data-ok="false"] { border-color: #72571f; color: #ffd075; background: #302712; }
+.record-badge[data-ok="unknown"] { border-color: #3b5064; color: #a7bbcc; background: #172534; }
+.record-badge[data-env="sim"] { border-color: #2e6a8a; color: #8fd8ff; background: #122e44; }
+.record-badge[data-env="real"] { border-color: #7b5b3a; color: #ffcf8f; background: #3a2c1a; }
+.record-meta { display: block; margin-top: 5px; color: #7893aa; font-size: 11px; white-space: nowrap; }
+.record-time { color: #8fa8c1; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .admin-table-wrap td input { width: min(260px, 100%); min-width: 150px; padding: 7px 10px; }
 .admin-table-wrap td select { min-width: 115px; padding: 7px 9px; }
 .save-cell { min-width: 155px; }
@@ -459,6 +475,74 @@
   .system-card { min-height: auto; }
   .readiness-services { grid-template-columns: 1fr 1fr; }
   .readiness-configuration { grid-template-columns: 1fr; }
+}
+
+.judgment-cell { display: flex; flex-wrap: wrap; gap: 6px; min-width: 210px; }
+.judgment-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #28506c;
+  border-radius: 999px;
+  padding: 3px 9px;
+  color: #83d6e5;
+  background: #0f3045;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.judgment-badge[data-ok="true"] { border-color: #2e6959; color: #72d7b3; background: #0d322c; }
+.judgment-badge[data-ok="false"] { border-color: #72571f; color: #ffd075; background: #302712; }
+.judgment-badge[data-ok="unknown"] { border-color: #3b5064; color: #a7bbcc; background: #172534; }
+
+.score-dialog {
+  width: min(480px, calc(100vw - 32px));
+  padding: 0;
+  border: 1px solid var(--admin-border-soft);
+  border-radius: 14px;
+  color: #c7d9e9;
+  background: #0b1c2e;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .5);
+}
+.score-dialog::backdrop { background: rgba(4, 12, 20, .62); }
+.score-dialog-form { display: flex; flex-direction: column; }
+.score-dialog-form header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 12px;
+}
+.score-dialog-form header h3 { margin: 0; color: #f3f8ff; font-size: 16px; }
+.score-dialog-close {
+  border: 0;
+  background: transparent;
+  color: #7893aa;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+.score-dialog-close:hover { color: #f3f8ff; }
+.score-dialog-meta { margin: 0; padding: 0 20px 12px; color: #7893aa; font-size: 12px; }
+.score-criteria { display: flex; flex-direction: column; gap: 8px; padding: 4px 20px 18px; }
+.score-criteria label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #1b3950;
+  border-radius: 9px;
+  background: #10273e;
+  cursor: pointer;
+}
+.score-criteria label:hover { border-color: #28506c; }
+.score-criteria input { width: 16px; height: 16px; accent-color: #83d6e5; }
+.score-criteria span { color: #c7d9e9; font-size: 14px; }
+.score-dialog-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--admin-border-soft);
+  background: #091a2c;
 }
 
 @media (max-width: 720px) {

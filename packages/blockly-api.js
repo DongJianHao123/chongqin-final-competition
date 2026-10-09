@@ -757,7 +757,54 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
       const { user } = principal(request);
       assertSameOrigin(request);
       const body = await parseJson(request);
-      if (!exactKeys(body, ["taskId", "mapRevision", "mapDigest", "completed", "checkpointCount", "targetDeliveredCount", "distractorClearedCount", "failedObstacleCount", "goalReached", "blockedMoves", "offRoadEpisodes", "offRoadDurationMs", "durationMs", "programCode", "workspaceXml", "executionTrace", "blockCount", "codeLineCount"])) {
+
+      if (body.target === "real") {
+        if (!exactKeys(body, ["target", "taskId", "durationMs", "programCode", "workspaceXml", "blockCount", "codeLineCount"])) {
+          throw new HttpError(400, "INVALID_RECORD", "运行记录格式不正确。 ");
+        }
+        const realTask = PRIMARY_TASKS[body.taskId] || null;
+        if (!Number.isSafeInteger(body.durationMs) || body.durationMs < 0 || body.durationMs > 10 * 60 * 1000
+          || typeof body.programCode !== "string" || body.programCode.length > MAX_PROGRAM_CHARS
+          || typeof body.workspaceXml !== "string" || body.workspaceXml.length > MAX_PROGRAM_CHARS
+          || !Number.isInteger(body.blockCount) || body.blockCount < 0 || body.blockCount > 10_000
+          || !Number.isInteger(body.codeLineCount) || body.codeLineCount < 0 || body.codeLineCount > 100_000) {
+          throw new HttpError(400, "INVALID_RECORD", "运行记录内容不正确。 ");
+        }
+        const realRecord = {
+          id: randomId("run"),
+          ownerUserId: user.id,
+          taskId: body.taskId,
+          taskName: realTask?.name || null,
+          target: "real",
+          completed: null,
+          goalReached: null,
+          checkpointCount: null,
+          checkpointTotal: null,
+          targetDeliveredCount: null,
+          distractorClearedCount: null,
+          failedObstacleCount: null,
+          durationMs: body.durationMs,
+          score: null,
+          programCode: body.programCode,
+          workspaceXml: body.workspaceXml,
+          executionTrace: [],
+          blockCount: body.blockCount,
+          codeLineCount: body.codeLineCount,
+          ...ownerSnapshot(user),
+          recordState: "saved",
+          savedAt: nowIso(),
+          submittedAt: null,
+          createdAt: nowIso()
+        };
+        store.insertRecord(realRecord);
+        sendJson(response, 201, { schemaVersion: "chenlong.blockly-record-save-receipt/v1", record: recordSummary(realRecord), authoritative: false });
+        return;
+      }
+
+      if (!exactKeys(body, ["target", "taskId", "mapRevision", "mapDigest", "completed", "checkpointCount", "targetDeliveredCount", "distractorClearedCount", "failedObstacleCount", "goalReached", "blockedMoves", "offRoadEpisodes", "offRoadDurationMs", "durationMs", "programCode", "workspaceXml", "executionTrace", "blockCount", "codeLineCount"])) {
+        throw new HttpError(400, "INVALID_RECORD", "运行记录格式不正确。 ");
+      }
+      if (body.target !== "sim") {
         throw new HttpError(400, "INVALID_RECORD", "运行记录格式不正确。 ");
       }
       const executionTrace = normalizeExecutionTrace(body.executionTrace);
@@ -804,6 +851,7 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
         ownerUserId: user.id,
         taskId: body.taskId,
         taskName: task.name,
+        target: "sim",
         completed: body.completed,
         checkpointCount: body.checkpointCount,
         checkpointTotal: task.checkpoints,
@@ -842,6 +890,7 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
       principal(request);
       const bestByOwner = new Map();
       for (const record of store.allRecords()) {
+        if (record.target === "real") continue;
         const durationMs = Number.isFinite(record.durationMs) && record.durationMs > 0 ? record.durationMs : null;
         if (durationMs === null) continue;
         const ownerId = record.ownerUserId;

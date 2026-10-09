@@ -30,6 +30,8 @@ const PERSONAL_SCORES_SCHEMA_VERSION = "chenlong.platform-personal-scores/v1";
 const AUTH_RESPONSE_SCHEMA_VERSION = "chenlong.auth/v1";
 const TEAM_INVITE_SCHEMA_VERSION = "chenlong.team-invite/v1";
 const ADMIN_USERS_SCHEMA_VERSION = "chenlong.platform-admin-users/v1";
+const ADMIN_RECORDS_SCHEMA_VERSION = "chenlong.platform-admin-records/v1";
+const ADMIN_JUDGMENT_SCHEMA_VERSION = "chenlong.platform-admin-judgment/v1";
 const MAX_AUTH_BODY_BYTES = 16 * 1024;
 const ADMIN_PAGE_SIZE = 15;
 const MAX_DURATION_MS = 600_000;
@@ -285,7 +287,8 @@ const BLOCKLY_STATIC_FILES = new Map([
   ["/vendor/blockly/javascript_compressed.js", path.join("vendor", "blockly", "javascript_compressed.js")],
   ["/vendor/blockly/msg/zh-hans.js", path.join("vendor", "blockly", "msg", "zh-hans.js")],
   ["/vendor/three/three.min.js", path.join("vendor", "three", "three.min.js")],
-  ["/vendor/lucide/lucide.min.js", path.join("vendor", "lucide", "lucide.min.js")]
+  ["/vendor/lucide/lucide.min.js", path.join("vendor", "lucide", "lucide.min.js")],
+  ["/assets/guangyang-island.png", path.join("assets", "guangyang-island.png")]
 ]);
 
 function rewriteBlocklyText(buffer, contentType) {
@@ -595,7 +598,8 @@ function recordDurationMs(record) {
 
 function userBestDurationMs(userId) {
   let best = null;
-  for (const record of store.allRecords({ recordState: "submitted" })) {
+  for (const record of store.allRecords()) {
+    if (record.target === "real") continue;
     if (record.ownerUserId !== userId) continue;
     const duration = recordDurationMs(record);
     if (duration === null) continue;
@@ -643,7 +647,7 @@ function buildBlocklyAdminRows(users, records) {
   }
 
   for (const record of records) {
-    if (record?.recordState !== "submitted") continue;
+    if (record.target === "real") continue;
     const duration = recordDurationMs(record);
     if (duration === null) continue;
     const teamId = typeof record.ownerTeamId === "string" && record.ownerTeamId ? record.ownerTeamId : null;
@@ -669,7 +673,6 @@ function buildBlocklyAdminRows(users, records) {
       teamName: team.teamName,
       group: team.group,
       members: team.members,
-      maps: [],
       bestDurationMs: team.bestDurationMs
     }))
     .sort((left, right) => {
@@ -681,6 +684,44 @@ function buildBlocklyAdminRows(users, records) {
       return left.bestDurationMs - right.bestDurationMs
         || left.teamName.localeCompare(right.teamName, "zh-CN");
     });
+}
+
+function realCarScoreRow(record, judgment, usernameById) {
+  return {
+    id: record.id,
+    teamName: typeof record.ownerTeamName === "string" ? record.ownerTeamName : "",
+    group: record.ownerGroup == null ? "primary" : record.ownerGroup,
+    ownerUsername: record.ownerUsername || null,
+    ownerDisplayName: record.ownerDisplayName || null,
+    durationMs: Number.isFinite(record.durationMs) ? record.durationMs : null,
+    createdAt: record.createdAt || null,
+    judgment: judgment ? {
+      taskCompleted: judgment.taskCompleted,
+      distractor1Cleared: judgment.distractor1Cleared,
+      distractor2Cleared: judgment.distractor2Cleared,
+      targetPicked: judgment.targetPicked,
+      targetDelivered: judgment.targetDelivered,
+      scoredAt: judgment.scoredAt,
+      scoredByUsername: usernameById.get(judgment.scoredByUserId) || null
+    } : null
+  };
+}
+
+function buildRealCarScoreRows() {
+  const users = store.listUsers();
+  const usernameById = new Map(users.map(user => [user.id, user.username]));
+  const judgments = store.listRecordJudgments();
+  const rows = store.allRecords()
+    .filter(record => record.target === "real")
+    .map(record => realCarScoreRow(record, judgments.get(record.id) || null, usernameById));
+  rows.sort((left, right) => {
+    if (left.durationMs === null && right.durationMs === null) return 0;
+    if (left.durationMs === null) return 1;
+    if (right.durationMs === null) return -1;
+    return left.durationMs - right.durationMs
+      || left.teamName.localeCompare(right.teamName, "zh-CN");
+  });
+  return rows;
 }
 
 function paginate(items, requestedPage, pageSize = ADMIN_PAGE_SIZE) {
@@ -699,21 +740,20 @@ function paginate(items, requestedPage, pageSize = ADMIN_PAGE_SIZE) {
 
 function handleAdminOverview(request, response, url) {
   requireAdmin(currentUser(request));
-  const rows = buildBlocklyAdminRows(store.listUsers(), store.allRecords({ recordState: "submitted" }));
+  const rows = buildRealCarScoreRows();
   const requestedGroup = url.searchParams.get("group");
   const group = requestedGroup === "primary" || requestedGroup === "junior" || requestedGroup === "high"
     ? requestedGroup
     : null;
-  const filteredRows = group ? rows.filter(team => team.group === group) : rows;
+  const filteredRows = group ? rows.filter(record => record.group === group) : rows;
   const pageValue = Number(url.searchParams.get("page") || 1);
   const page = paginate(filteredRows, Number.isSafeInteger(pageValue) ? pageValue : 1);
+  const teamNames = new Set(rows.map(record => record.teamName).filter(Boolean));
   jsonBody(response, 200, {
     schemaVersion: ADMIN_OVERVIEW_SCHEMA_VERSION,
     scoring: {
-      metric: "duration",
-      unit: "milliseconds",
-      maximumMs: MAX_DURATION_MS,
-      description: "纯时间制：程序执行总用时越短排名越高，超时/未完成记为最大用时。"
+      metric: "manual",
+      description: "手动打分：逐条标注真实小车运行的任务完成、混淆物清除、目标物夹起与运送等 5 项完成情况；扣分规则待定。"
     },
     pagination: {
       page: page.page,
@@ -722,9 +762,11 @@ function handleAdminOverview(request, response, url) {
       totalPages: page.totalPages,
       unfilteredTotal: rows.length
     },
-    teams: page.items,
-    links: {
-      blocklyRecords: "/blockly/admin.html?platform=1"
+    records: page.items,
+    summary: {
+      teamCount: teamNames.size,
+      bestDurationMs: rows.length ? rows[0].durationMs : null,
+      bestTeamName: rows.length ? rows[0].teamName : null
     },
     authoritative: false
   });
@@ -741,20 +783,34 @@ function formatDurationSeconds(ms) {
   return (ms / 1000).toFixed(1);
 }
 
-function adminRowsCsv(rows) {
-  const header = ["队伍名称", "分组", "用时(秒)"];
-  const data = rows.map(team => [
-    team.teamName,
-    PARTICIPANT_GROUP_LABELS[team.group] || "",
-    formatDurationSeconds(team.bestDurationMs)
-  ]);
+function judgmentBoolLabel(value) {
+  return value === true ? "是" : value === false ? "否" : "";
+}
+
+function realCarRowsCsv(rows) {
+  const header = ["队伍名称", "分组", "学员", "用时(秒)", "完成任务", "混淆物1清除", "混淆物2清除", "目标物夹起", "目标物运送到终点", "打分时间"];
+  const data = rows.map(record => {
+    const judgment = record.judgment;
+    return [
+      record.teamName,
+      PARTICIPANT_GROUP_LABELS[record.group] || "",
+      record.ownerDisplayName || record.ownerUsername || "",
+      formatDurationSeconds(record.durationMs),
+      judgmentBoolLabel(judgment?.taskCompleted),
+      judgmentBoolLabel(judgment?.distractor1Cleared),
+      judgmentBoolLabel(judgment?.distractor2Cleared),
+      judgmentBoolLabel(judgment?.targetPicked),
+      judgmentBoolLabel(judgment?.targetDelivered),
+      judgment?.scoredAt ? String(judgment.scoredAt).slice(0, 19).replace("T", " ") : ""
+    ];
+  });
   return `\uFEFF${[header, ...data].map(row => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
 }
 
 function handleAdminExport(request, response) {
   requireAdmin(currentUser(request));
-  const rows = buildBlocklyAdminRows(store.listUsers(), store.allRecords({ recordState: "submitted" }));
-  const body = Buffer.from(adminRowsCsv(rows), "utf8");
+  const rows = buildRealCarScoreRows();
+  const body = Buffer.from(realCarRowsCsv(rows), "utf8");
   response.writeHead(200, {
     "Content-Type": "text/csv; charset=utf-8",
     "Content-Length": body.length,
@@ -783,6 +839,83 @@ async function handleAdminUserUpdate(request, response, userId) {
     schemaVersion: ADMIN_USERS_SCHEMA_VERSION,
     user: adminUserSummary(updated),
     changed: result.changed,
+    authoritative: false
+  });
+}
+
+function adminRecordRow(record) {
+  return {
+    id: record.id,
+    target: record.target === "real" ? "real" : "sim",
+    taskName: record.taskName || null,
+    durationMs: Number.isFinite(record.durationMs) ? record.durationMs : null,
+    completed: typeof record.completed === "boolean" ? record.completed : null,
+    goalReached: typeof record.goalReached === "boolean" ? record.goalReached : null,
+    checkpointCount: Number.isInteger(record.checkpointCount) ? record.checkpointCount : null,
+    checkpointTotal: Number.isInteger(record.checkpointTotal) ? record.checkpointTotal : null,
+    targetDeliveredCount: Number.isInteger(record.targetDeliveredCount) ? record.targetDeliveredCount : null,
+    distractorClearedCount: Number.isInteger(record.distractorClearedCount) ? record.distractorClearedCount : null,
+    failedObstacleCount: Number.isInteger(record.failedObstacleCount) ? record.failedObstacleCount : null,
+    recordState: record.recordState || null,
+    createdAt: record.createdAt || null,
+    submittedAt: record.submittedAt || null,
+    ownerUsername: record.ownerUsername || null,
+    ownerDisplayName: record.ownerDisplayName || null,
+    ownerTeamName: record.ownerTeamName || null,
+    ownerGroup: record.ownerGroup == null ? null : record.ownerGroup
+  };
+}
+
+function handleAdminRecords(request, response, url) {
+  requireAdmin(currentUser(request));
+  const pageValue = Number(url.searchParams.get("page") || 1);
+  const page = paginate(store.allRecords(), Number.isSafeInteger(pageValue) ? pageValue : 1);
+  jsonBody(response, 200, {
+    schemaVersion: ADMIN_RECORDS_SCHEMA_VERSION,
+    records: page.items.map(adminRecordRow),
+    pagination: {
+      page: page.page,
+      pageSize: page.pageSize,
+      total: page.total,
+      totalPages: page.totalPages
+    },
+    authoritative: false
+  });
+}
+
+async function handleAdminRecordJudgment(request, response, recordId) {
+  const admin = requireAdmin(currentUser(request));
+  const body = await readJsonBody(request, MAX_AUTH_BODY_BYTES);
+  const criteria = ["taskCompleted", "distractor1Cleared", "distractor2Cleared", "targetPicked", "targetDelivered"];
+  assertAllowedFields(body, new Set(criteria), "JUDGMENT");
+  for (const field of criteria) {
+    if (typeof body[field] !== "boolean") {
+      throw new PlatformHttpError(400, "INVALID_JUDGMENT", "打分项必须为布尔值。");
+    }
+  }
+  const record = store.findRecordById(recordId);
+  if (!record || record.target !== "real") {
+    throw new PlatformHttpError(404, "RECORD_NOT_FOUND", "未找到对应的真实小车运行记录。");
+  }
+  const judgment = store.upsertRecordJudgment(recordId, {
+    taskCompleted: body.taskCompleted,
+    distractor1Cleared: body.distractor1Cleared,
+    distractor2Cleared: body.distractor2Cleared,
+    targetPicked: body.targetPicked,
+    targetDelivered: body.targetDelivered,
+    scoredAt: new Date().toISOString(),
+    scoredByUserId: admin.id
+  });
+  jsonBody(response, 200, {
+    schemaVersion: ADMIN_JUDGMENT_SCHEMA_VERSION,
+    judgment: {
+      taskCompleted: judgment.taskCompleted,
+      distractor1Cleared: judgment.distractor1Cleared,
+      distractor2Cleared: judgment.distractor2Cleared,
+      targetPicked: judgment.targetPicked,
+      targetDelivered: judgment.targetDelivered,
+      scoredAt: judgment.scoredAt
+    },
     authoritative: false
   });
 }
@@ -1037,9 +1170,18 @@ function createServer(config = {}) {
         handleAdminUsers(request, response);
         return;
       }
+      if (pathname === "/api/platform/admin/records" && request.method === "GET") {
+        handleAdminRecords(request, response, url);
+        return;
+      }
       const adminUserMatch = pathname.match(/^\/api\/platform\/admin\/users\/(usr_[a-f0-9]{32})$/);
       if (adminUserMatch && request.method === "PATCH") {
         await handleAdminUserUpdate(request, response, adminUserMatch[1]);
+        return;
+      }
+      const adminRecordJudgmentMatch = pathname.match(/^\/api\/platform\/admin\/records\/(run_[a-f0-9]{32})\/judgment$/);
+      if (adminRecordJudgmentMatch && request.method === "POST") {
+        await handleAdminRecordJudgment(request, response, adminRecordJudgmentMatch[1]);
         return;
       }
 

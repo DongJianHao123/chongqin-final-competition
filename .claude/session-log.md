@@ -49,3 +49,30 @@ Blockly 卡片撑满整行：portal.css 加 .mode-card:not([hidden]){grid-column
 
 ## 2026-09-29 14:21
 重置管理员账号：auth-store.json 中 djh 管理员改名为 admin（username/usernameKey/displayName），密码设为 CwSru9YQgupTXX3D9UMd（scrypt 哈希已生成并验证通过），revision 16→17，已备份 auth-store.json.bak。需重启 car-python 后端生效（AuthStore 启动时读盘进内存、无热重载）。
+
+## 2026-09-30 17:35
+统一SQLite迁移 Task2 完成：新建 packages/platform-auth.js（scrypt 认证：register/login/loginExternalIdentity/createGuest/authenticate/logout + 团队邀请/用户队伍管理），store 补 listSessionsByUserId/countSessions/countUsers；丢弃原 mutation 队列改用简单 scrypt 并发信号量。已验证 admin 密码 CwSru9YQgupTXX3D9UMd 匹配存储哈希。node --check + 冒烟测试通过。
+
+## 2026-09-30 17:41
+统一SQLite迁移 Task3/4 完成：official-sso.js 原样迁到 packages/（platform-service-auth.js 是联邦HMAC，随Python删除不迁移）；新建 tools/migrate-db.js（幂等建表+种子3地图+迁移admin，GYI-PRIMARY-01 digest 与旧store一致验证通过）；data/.gitignore 忽略 sqlite 文件。
+
+## 2026-09-30 18:18
+完成统一 SQLite 单进程改造：重写根 server.js（接 PlatformStore/Auth/blockly-api/official-sso，删代理与联邦）、删除 projects/car-python/ 与 blockly 独立 server.js 及多进程交付/联调工具、清理 platform-contract/score-download/live-score-source/internal-service-auth 等联邦与 Python 成绩模块；package.json 收敛为单进程 start + migrate-db。node --check 全通过，migrate-db 种子 3 地图+admin，6399 端口冒烟验证 health/blockly-api/unified-auth 正常。
+
+## 2026-10-09 10:18
+验证统一单进程系统已接入外部 SSO：分析 generate_test_jump.py（与 packages/official-sso.js 签名算法逐条对齐，含硬编码密钥泄露风险）；实测 /sso/jump 全链路（设 CHENLONG_OFFICIAL_SSO_SECRET 后 302 登录+种 cookie、replay 409、SSO 用户落库 users/teams/sessions，password_hash=null），清理测试数据后重启 6190 并启用 SSO（officialSsoConfigured=true）
+
+## 2026-10-09 10:25
+命令行部署接入 SSO 密钥：弃用 docker.env，改建 .env（gitignore 覆盖）写入 CHENLONG_OFFICIAL_SSO_SECRET；package.json start 改为 node --env-file-if-exists=.env server.js，npm start 自动加载；.gitignore 增 generate_test_jump.py、data/.gitignore 增 official-sso/
+
+## 2026-10-09 11:20
+修复计时运行用时不在后台显示：管理端概览/导出/个人成绩改读全部记录(去掉 recordState=submitted 过滤)，并新增「运行记录」tab(/api/platform/admin/records 接口 + admin.html/platform-admin.js/admin.css)，按页展示每次计时运行的实际运行时间、是否到达终点、任务完成情况(检查点进度)。
+
+## 2026-10-09 11:32
+运行记录区分真实小车/模拟器：给真实小车开放「计时运行」(移除禁用、runMode 允许 real scored)，archivePrimaryRun 按 target 分支(real 只记墙钟用时+代码，sim 保留任务评分)，后端 /api/records 新增 real 分支存 target 字段且 score/completed 等为 null；管理端运行记录加「运行环境」列(真实小车/模拟器)，真实小车的到达终点/任务完成显示「不适用」；排行榜/队伍总成绩/个人成绩排除 real 记录不计入排名。
+
+## 2026-10-09 11:52
+「队伍总成绩」改版为真实小车手动打分：platform-store.js 新增 record_judgments 表（5 项布尔打分 + scored_at/by）+ findRecordJudgment/upsertRecordJudgment/listRecordJudgments；server.js overview/export 改为 buildRealCarScoreRows() 只读 real 记录并附 judgment，新增 POST /api/platform/admin/records/:id/judgment 打分接口；admin.html 成绩表改 6 列 + scoreDialog 弹窗，platform-admin.js 用 scoreRecordRow/openScoreDialog 渲染并提交打分。扣分规则留待后续。
+
+## 2026-10-09 12:12
+真实小车「小车状态」面板改为显示有意义的连接/地址/夹爪状态：app.js 新增 realGripperState 跟踪夹爪指令，updateRobotState 真实分支把位置/朝向/夹爪/前方改标为 连接/地址/夹爪/前方（连接=需重发停止/正常、地址=IP、夹爪=抓着/松开/未操作、前方=无距离传感器），index.html 给四个 label 加 id 并 bump app.js 缓存版本

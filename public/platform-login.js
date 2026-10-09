@@ -7,12 +7,10 @@
   function destination(user) {
     const fallback = user?.role === "admin" ? "/admin.html" : "/portal.html";
     if (!requestedReturnTo.startsWith("/") || requestedReturnTo.startsWith("//")) return fallback;
-    const adminOnlyPath = requestedReturnTo.startsWith("/python/admin")
-      || requestedReturnTo.startsWith("/blockly/admin")
+    const adminOnlyPath = requestedReturnTo.startsWith("/blockly/admin")
       || requestedReturnTo.startsWith("/admin.html");
     if (adminOnlyPath) return user?.role === "admin" ? requestedReturnTo : fallback;
-    const safeParticipantPath = requestedReturnTo.startsWith("/python/")
-      || requestedReturnTo.startsWith("/blockly/")
+    const safeParticipantPath = requestedReturnTo.startsWith("/blockly/")
       || requestedReturnTo === "/leaderboard.html";
     if (safeParticipantPath) return requestedReturnTo;
     return fallback;
@@ -31,21 +29,7 @@
       location.replace(destination(payload.user));
     } catch (error) { show(error.message); }
   }
-  function select(register) {
-    $("#loginForm").hidden = register;
-    $("#registerForm").hidden = !register;
-    $("#loginTab").setAttribute("aria-selected", String(!register));
-    $("#registerTab").setAttribute("aria-selected", String(register));
-    show("");
-  }
-  $("#loginTab").onclick = () => select(false);
-  $("#registerTab").onclick = () => select(true);
   $("#guestButton").onclick = enterAsGuest;
-  $("#teamAction").onchange = event => {
-    const joining = event.target.value === "join";
-    $("#teamNameField").hidden = joining; $("#teamName").required = !joining;
-    $("#inviteField").hidden = !joining; $("#inviteCode").required = joining;
-  };
   $("#loginForm").onsubmit = async event => {
     event.preventDefault(); show("正在登录…", "normal");
     try {
@@ -53,27 +37,11 @@
       location.replace(destination(payload.user));
     } catch (error) { show(error.message); }
   };
-  $("#registerForm").onsubmit = async event => {
-    event.preventDefault();
-    if ($("#registerPassword").value !== $("#confirmPassword").value) { show("两次输入的密码不一致。"); return; }
-    const joining = $("#teamAction").value === "join";
-    const body = { username: $("#registerUsername").value.trim(), password: $("#registerPassword").value, group: $("#registerGroup").value, teamAction: joining ? "join" : "create" };
-    if (joining) body.inviteCode = $("#inviteCode").value.trim().toUpperCase(); else body.teamName = $("#teamName").value.trim();
-    show("正在注册…", "normal");
-    try {
-      const payload = await request("/api/v1/auth/register", body);
-      if (payload.teamInviteCode) {
-        $("#createdInvite").textContent = payload.teamInviteCode;
-        $("#inviteDialog").showModal();
-        $("#continueButton").onclick = () => location.replace(destination(payload.user));
-      } else location.replace(destination(payload.user));
-    } catch (error) { show(error.message); }
-  };
   fetch("/api/platform/me", { credentials: "same-origin", cache: "no-store" }).then(response => response.ok ? response.json() : null).then(payload => {
     if (payload?.user) {
       // 已登录：直接进入目标页。
       location.replace(destination(payload.user));
     }
-    // 未登录：停留在登录页，由用户选择登录 / 注册 / 以游客身份进入。
+    // 未登录：停留在登录页，由用户选择登录 / 以游客身份进入。
   }).catch(() => {});
 })();

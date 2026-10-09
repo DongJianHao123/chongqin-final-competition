@@ -433,7 +433,6 @@ h1 {
 .app-shell.is-real-target #debugSpeedButton,
 .app-shell.is-real-target #pauseButton,
 .app-shell.is-real-target #stepButton,
-.app-shell.is-real-target #scoreRunButton,
 .app-shell.is-real-target #resetButton {
   display: none;
 }

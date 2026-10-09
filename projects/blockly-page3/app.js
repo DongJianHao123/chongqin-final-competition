@@ -390,6 +390,7 @@ let runControlBusy = false;
 let runStartPending = false;
 let debugPlaybackRate = 1;
 let realStopHazard = false;
+let realGripperState = null;
 let realStopPromise = null;
 let realStopPending = false;
 let activeRealCameraBaseUrl = null;
@@ -761,6 +762,10 @@ const poseText = document.querySelector("#poseText");
 const headingText = document.querySelector("#headingText");
 const gripperText = document.querySelector("#gripperText");
 const frontText = document.querySelector("#frontText");
+const poseLabel = document.querySelector("#poseLabel");
+const headingLabel = document.querySelector("#headingLabel");
+const gripperLabel = document.querySelector("#gripperLabel");
+const frontLabel = document.querySelector("#frontLabel");
 const actionLog = document.querySelector("#actionLog");
 const workspaceSaveStatus = document.querySelector("#workspaceSaveStatus");
 const saveSnapshotButton = document.querySelector("#saveSnapshotButton");
@@ -2984,7 +2989,7 @@ function updateRunControls() {
         : !primaryUser ? "请先登录" : realRunLocked ? "请先重新停止" : "调试运行";
   }
   if (scoreRunButton) {
-    scoreRunButton.disabled = !primaryUser || transitioning || active || targetSelect?.value === "real";
+    scoreRunButton.disabled = !primaryUser || transitioning || active;
     scoreRunButton.querySelector("span").textContent = active?.runMode === "scored" ? "计时运行中" : "计时运行";
   }
   if (debugSpeedButton) {
@@ -6185,12 +6190,20 @@ function setTextIfChanged(element, value) {
 function updateRobotState(measuredDistance = null) {
   if (!poseText) return;
   if (targetSelect?.value === "real") {
-    setTextIfChanged(poseText, "未回传");
-    setTextIfChanged(headingText, "未回传");
-    setTextIfChanged(gripperText, "未回传");
-    setTextIfChanged(frontText, "无传感器");
+    setTextIfChanged(poseLabel, "连接");
+    setTextIfChanged(headingLabel, "地址");
+    setTextIfChanged(gripperLabel, "夹爪");
+    setTextIfChanged(frontLabel, "前方");
+    setTextIfChanged(poseText, realStopHazard ? "需重发停止" : "正常");
+    setTextIfChanged(headingText, (robotBaseUrlInput?.value || "192.168.4.1").trim());
+    setTextIfChanged(gripperText, realGripperState === "grabbed" ? "抓着" : realGripperState === "released" ? "松开" : "未操作");
+    setTextIfChanged(frontText, "无距离传感器");
     return;
   }
+  setTextIfChanged(poseLabel, "位置");
+  setTextIfChanged(headingLabel, "朝向");
+  setTextIfChanged(gripperLabel, "夹爪");
+  setTextIfChanged(frontLabel, "前方");
   const distance = measuredDistance ?? frontDistance();
   const xCm = primaryWorldUnitsToCm(robotPose.x);
   const zCm = primaryWorldUnitsToCm(robotPose.z);
@@ -8045,6 +8058,8 @@ function makeRealRobotApi(context) {
       actionCount++;
       addLog("真实小车：机械臂抓取，等待 3 秒完成动作。");
       await sendRealRobotAction("grab", {}, context);
+      realGripperState = "grabbed";
+      updateRobotState();
       await waitRealActionDuration(REAL_GRAB_DURATION_MS, context);
     },
     release: async () => {
@@ -8052,6 +8067,8 @@ function makeRealRobotApi(context) {
       actionCount++;
       addLog("真实小车：机械臂松开，等待 2 秒完成动作。");
       await sendRealRobotAction("release", {}, context);
+      realGripperState = "released";
+      updateRobotState();
       await waitRealActionDuration(REAL_RELEASE_DURATION_MS, context);
     },
     sees: (target, confidence) => queryRealRobotVision(context, "sees", target, confidence),
@@ -8215,7 +8232,7 @@ async function runProgram(options = {}) {
     return;
   }
   const target = targetSelect?.value === "real" ? "real" : "sim";
-  const runMode = target === "sim" && requestedRunMode === "scored" ? "scored" : "debug";
+  const runMode = requestedRunMode === "scored" ? "scored" : "debug";
   const requestedPlaybackRate = runMode === "debug"
     ? BLOCKLY_SIMULATION_CLOCK.normalizePlaybackRate(options.playbackRate ?? debugPlaybackRate)
     : 1;
@@ -8367,7 +8384,7 @@ async function runProgram(options = {}) {
     } else if (context.target === "real") {
       primaryRunElapsedMs = Math.max(0, Date.now() - primaryRunStartedAt);
     }
-    if (context.target === "sim" && context.runMode === "scored" && primaryUser && actionCount > 0
+    if (context.runMode === "scored" && primaryUser && actionCount > 0
       && !["reset", "stopped", "mission-change", "code-changed"].includes(context.reason)) {
       await archivePrimaryRun(plainCode, context).catch(error => {
         addLog(`本次成绩暂未保存：${error.message}`);
@@ -8431,7 +8448,7 @@ function setRunTarget(target) {
   if (real) {
     startRealCameraPreview();
     setStatus(realStopHazard ? "请先重新发送停止指令" : "真实小车模式");
-    addLog("已切换到真实小车：支持摄像头实时预览，以及前进、后退、转向、等待、抓取和松开；画面不提供给积木程序识别，实车也没有定位、传感或任务状态回传。本模式不判定任务、不保存成绩、不参与评分。");
+    addLog("已切换到真实小车：支持摄像头实时预览，以及前进、后退、转向、等待、抓取和松开；画面不提供给积木程序识别，实车也没有定位、传感或任务状态回传。本模式不判定任务；「计时运行」仅记录墙钟用时，不计入任务评分。");
     if (realStopHazard) addLog("安全锁已启用：上次停止没有成功发送，请检查连接并点击“停止”后再运行。");
     if (location.protocol === "https:") {
       addLog("提示：公网 https 页面可能无法直接请求小车 http 接口，实测控制建议用本地 http 页面打开。");
@@ -9350,25 +9367,42 @@ async function initializePrimaryAccount() {
 }
 
 async function archivePrimaryRun(programCode, context) {
-  if (context?.target !== "sim" || context.runMode !== "scored") return null;
-  const completed = Boolean(missionAttempt?.completed);
-  const checkpointTotal = Math.max(1, missionAttempt?.checkpointPoints?.length || 3);
-  const checkpointCount = Math.max(0, Math.min(checkpointTotal, Number(missionAttempt?.nextCheckpointIndex) || 0));
-  const taskProgress = compositeMissionProgress();
+  if (context.runMode !== "scored") return null;
+  const target = context.target === "real" ? "real" : "sim";
   const workspaceXml = JSON.stringify(
     context.workspaceSnapshot || Blockly.serialization.workspaces.save(workspace)
-  );
-  const logicalDurationMs = Math.min(
-    10 * 60 * 1000,
-    Math.max(0, Math.round(Number(context.logicalElapsedMs) || 0))
   );
   const blockCount = Math.max(0, workspace?.getAllBlocks(true)?.length || 0);
   const codeLineCount = String(programCode || "")
     .split("\n")
     .filter(line => line.trim().length > 0).length;
-  const result = await primaryRequest("/api/records", {
-    method: "POST",
-    body: JSON.stringify({
+
+  let body;
+  if (target === "real") {
+    const wallClockMs = Math.min(
+      10 * 60 * 1000,
+      Math.max(0, Math.round(Number(primaryRunElapsedMs) || 0))
+    );
+    body = {
+      target: "real",
+      taskId: activeMission.taskId || "GYI-PRIMARY-01",
+      durationMs: wallClockMs,
+      programCode,
+      workspaceXml,
+      blockCount,
+      codeLineCount
+    };
+  } else {
+    const completed = Boolean(missionAttempt?.completed);
+    const checkpointTotal = Math.max(1, missionAttempt?.checkpointPoints?.length || 3);
+    const checkpointCount = Math.max(0, Math.min(checkpointTotal, Number(missionAttempt?.nextCheckpointIndex) || 0));
+    const taskProgress = compositeMissionProgress();
+    const logicalDurationMs = Math.min(
+      10 * 60 * 1000,
+      Math.max(0, Math.round(Number(context.logicalElapsedMs) || 0))
+    );
+    body = {
+      target: "sim",
       taskId: activeMission.taskId || "GYI-PRIMARY-01",
       mapRevision: activeMission.mapRevision,
       mapDigest: activeMission.mapDigest,
@@ -9390,14 +9424,23 @@ async function archivePrimaryRun(programCode, context) {
       executionTrace: Array.isArray(context?.executedApiMethods) ? [...context.executedApiMethods] : [],
       blockCount,
       codeLineCount
-    })
+    };
+  }
+
+  const result = await primaryRequest("/api/records", {
+    method: "POST",
+    body: JSON.stringify(body)
   });
   const record = result?.record;
-  if (result?.schemaVersion !== "chenlong.blockly-record-save-receipt/v1" || !record || !Number.isFinite(record.score)
-    || record.recordState !== "saved") {
+  const receiptValid = result?.schemaVersion === "chenlong.blockly-record-save-receipt/v1"
+    && record && record.recordState === "saved"
+    && (target === "real" ? Number.isFinite(record.durationMs) : Number.isFinite(record.score));
+  if (!receiptValid) {
     throw new Error("成绩保存回执不完整，请稍后重试。 ");
   }
-  addLog(`本次计时运行已保存：${record.score}/100 分，用时 ${(record.durationMs / 1000).toFixed(1)} 秒。`);
+  addLog(target === "real"
+    ? `本次计时运行已保存：用时 ${(record.durationMs / 1000).toFixed(1)} 秒。`
+    : `本次计时运行已保存：${record.score}/100 分，用时 ${(record.durationMs / 1000).toFixed(1)} 秒。`);
 }
 
 window.getRobotLabPerformance = getRobotLabPerformance;

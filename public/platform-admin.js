@@ -3,7 +3,6 @@
 (() => {
   const $ = selector => document.querySelector(selector);
   const groups = { primary: "小学组", junior: "初中组", high: "高中组" };
-  const task1Id = "R2-GYI-MVP-01";
   const PAGE_SIZE = 15;
   let scorePage = 1;
   let scoreTotalPages = 1;
@@ -12,10 +11,13 @@
   let users = [];
   let bestTeam = null;
   let readinessLoaded = false;
+  let recordPage = 1;
+  let recordTotalPages = 1;
+  let recordsLoaded = false;
+  let scoreDialogRecord = null;
 
   const readinessLabels = {
     gateway: "统一入口",
-    python: "Python 赛场",
     blockly: "Blockly 赛场"
   };
 
@@ -67,7 +69,7 @@
     const degraded = payload?.status !== "ok";
     $("#readinessSummary").textContent = degraded
       ? "发现服务或部署配置异常，请在比赛开始前处理。"
-      : "三个服务均可访问；请同时确认下方公网部署配置。";
+      : "平台服务均可访问；请同时确认下方公网部署配置。";
     $("#readinessSummary").dataset.kind = degraded ? "warning" : "ok";
 
     $("#readinessServices").replaceChildren(...Object.entries(readinessLabels).map(([key, label]) => {
@@ -118,6 +120,14 @@
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = (totalSeconds % 60).toFixed(1);
     return minutes > 0 ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`;
+  }
+
+  function formatDateTime(iso) {
+    if (!iso) return "—";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "—";
+    const pad = n => String(n).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
   function updateMetrics() {
@@ -245,31 +255,70 @@
     updateMetrics();
   }
 
-  function teamRow(team, index) {
+  function judgmentBadge(label, value) {
+    const badge = textElement("span", "judgment-badge", label);
+    badge.dataset.ok = value === true ? "true" : value === false ? "false" : "unknown";
+    return badge;
+  }
+
+  function scoreRecordRow(record, index) {
     const row = document.createElement("tr");
     const rank = (scorePage - 1) * PAGE_SIZE + index + 1;
     const rankCell = textElement("td", "rank-cell", String(rank));
     if (rank <= 3) rankCell.dataset.medal = String(rank);
     row.append(rankCell);
 
-    const identity = document.createElement("td");
-    identity.className = "team-cell";
-    identity.append(textElement("strong", "", team.teamName), textElement("small", "", groups[team.group] || team.group || "未设置小组"));
-    row.append(identity);
+    const teamCell = document.createElement("td");
+    teamCell.className = "team-cell";
+    teamCell.append(textElement("strong", "", record.teamName || "—"), textElement("small", "", groups[record.group] || record.group || "未设置小组"));
+    row.append(teamCell);
+
+    const userCell = document.createElement("td");
+    userCell.className = "identity-cell";
+    userCell.append(textElement("strong", "", record.ownerDisplayName || record.ownerUsername || "—"), textElement("small", "", record.ownerUsername || ""));
+    row.append(userCell);
 
     const durationCell = document.createElement("td");
-    durationCell.append(textElement("strong", "total-score", formatDurationMs(team.bestDurationMs)));
+    durationCell.append(textElement("strong", "total-score", formatDurationMs(record.durationMs)));
     row.append(durationCell);
 
-    const mapsCell = document.createElement("td");
-    const mapList = document.createElement("div");
-    mapList.className = "map-list";
-    const task1Map = (team.maps || []).find(map => map.taskId === task1Id);
-    if (task1Map) mapList.append(textElement("span", "map-tag", `任务1 · 第${task1Map.variantNumber}套`));
-    else mapList.append(textElement("span", "score-value missing", "未分配"));
-    mapsCell.append(mapList);
-    row.append(mapsCell);
+    const judgmentCell = document.createElement("td");
+    judgmentCell.className = "judgment-cell";
+    const judgment = record.judgment;
+    if (judgment) {
+      judgmentCell.append(
+        judgmentBadge("完成任务", judgment.taskCompleted),
+        judgmentBadge("混淆物1", judgment.distractor1Cleared),
+        judgmentBadge("混淆物2", judgment.distractor2Cleared),
+        judgmentBadge("目标夹起", judgment.targetPicked),
+        judgmentBadge("运送到终点", judgment.targetDelivered)
+      );
+    } else {
+      judgmentCell.append(textElement("span", "record-meta", "未打分"));
+    }
+    row.append(judgmentCell);
+
+    const action = document.createElement("td");
+    action.className = "save-cell";
+    const button = textElement("button", "", judgment ? "重新打分" : "打分");
+    button.type = "button";
+    button.addEventListener("click", () => openScoreDialog(record));
+    action.append(button);
+    row.append(action);
+
     return row;
+  }
+
+  function openScoreDialog(record) {
+    scoreDialogRecord = record;
+    $("#scoreDialogMeta").textContent = `${record.teamName || "未命名队伍"} · ${record.ownerDisplayName || record.ownerUsername || ""} · ${formatDurationMs(record.durationMs)}`;
+    const judgment = record.judgment;
+    $("#judgeTaskCompleted").checked = judgment?.taskCompleted === true;
+    $("#judgeDistractor1").checked = judgment?.distractor1Cleared === true;
+    $("#judgeDistractor2").checked = judgment?.distractor2Cleared === true;
+    $("#judgeTargetPicked").checked = judgment?.targetPicked === true;
+    $("#judgeTargetDelivered").checked = judgment?.targetDelivered === true;
+    $("#scoreDialog").showModal();
   }
 
   async function loadScores({ preservePage = false } = {}) {
@@ -279,19 +328,90 @@
     const payload = await jsonRequest(`/api/platform/admin/overview?${query}`);
     scorePage = payload.pagination.page;
     scoreTotalPages = payload.pagination.totalPages;
-    $("#rows").replaceChildren(...payload.teams.map(teamRow));
-    if (scorePage === 1) bestTeam = payload.teams[0] || null;
-    $("#metricTeams").textContent = String(payload.pagination.unfilteredTotal ?? payload.pagination.total);
+    $("#rows").replaceChildren(...(payload.records || []).map(scoreRecordRow));
+    if (scorePage === 1) {
+      const summary = payload.summary || {};
+      bestTeam = summary.bestDurationMs != null
+        ? { bestDurationMs: summary.bestDurationMs, teamName: summary.bestTeamName || "—" }
+        : null;
+      $("#metricTeams").textContent = String(summary.teamCount ?? 0);
+    }
     updateMetrics();
     const start = payload.pagination.total ? (scorePage - 1) * PAGE_SIZE + 1 : 0;
     const end = Math.min(scorePage * PAGE_SIZE, payload.pagination.total);
-    $("#pageInfo").textContent = `第 ${start}–${end} 队，共 ${payload.pagination.total} 队 · 第 ${scorePage}/${scoreTotalPages} 页`;
+    $("#pageInfo").textContent = `第 ${start}–${end} 条，共 ${payload.pagination.total} 条 · 第 ${scorePage}/${scoreTotalPages} 页`;
     $("#prev").disabled = scorePage <= 1;
     $("#next").disabled = scorePage >= scoreTotalPages;
   }
 
+  function recordStatusBadge(value, trueLabel, falseLabel) {
+    const badge = textElement("span", "record-badge", value === true ? trueLabel : value === false ? falseLabel : "—");
+    badge.dataset.ok = value === true ? "true" : value === false ? "false" : "unknown";
+    return badge;
+  }
+
+  function recordRow(record) {
+    const row = document.createElement("tr");
+    const isReal = record.target === "real";
+
+    row.append(textElement("td", "record-time", formatDateTime(record.createdAt)));
+
+    const teamCell = document.createElement("td");
+    teamCell.className = "team-cell";
+    teamCell.append(textElement("strong", "", record.ownerTeamName || "—"));
+    row.append(teamCell);
+
+    const identity = document.createElement("td");
+    identity.className = "identity-cell";
+    identity.append(
+      textElement("strong", "", record.ownerDisplayName || record.ownerUsername || "—"),
+      textElement("small", "", record.ownerUsername || "")
+    );
+    row.append(identity);
+
+    const envCell = document.createElement("td");
+    const envBadge = textElement("span", "record-badge", isReal ? "真实小车" : "模拟器");
+    envBadge.dataset.env = isReal ? "real" : "sim";
+    envCell.append(envBadge);
+    row.append(envCell);
+
+    const durationCell = document.createElement("td");
+    durationCell.append(textElement("strong", "total-score", formatDurationMs(record.durationMs)));
+    row.append(durationCell);
+
+    const goalCell = document.createElement("td");
+    goalCell.append(isReal ? textElement("span", "record-meta", "不适用") : recordStatusBadge(record.goalReached, "到达", "未到达"));
+    row.append(goalCell);
+
+    const taskCell = document.createElement("td");
+    if (isReal) {
+      taskCell.append(textElement("span", "record-meta", "不适用"));
+    } else {
+      taskCell.append(recordStatusBadge(record.completed, "已完成", "未完成"));
+      taskCell.append(textElement("small", "record-meta", `检查点 ${record.checkpointCount ?? 0}/${record.checkpointTotal ?? 0}`));
+    }
+    row.append(taskCell);
+
+    return row;
+  }
+
+  async function loadRecords({ preservePage = false } = {}) {
+    if (!preservePage) recordPage = 1;
+    const query = new URLSearchParams({ page: String(recordPage) });
+    const payload = await jsonRequest(`/api/platform/admin/records?${query}`);
+    recordPage = payload.pagination.page;
+    recordTotalPages = payload.pagination.totalPages;
+    $("#recordRows").replaceChildren(...(payload.records || []).map(recordRow));
+    const start = payload.pagination.total ? (recordPage - 1) * PAGE_SIZE + 1 : 0;
+    const end = Math.min(recordPage * PAGE_SIZE, payload.pagination.total);
+    $("#recordPageInfo").textContent = `第 ${start}–${end} 条，共 ${payload.pagination.total} 条 · 第 ${recordPage}/${recordTotalPages} 页`;
+    $("#recordPrev").disabled = recordPage <= 1;
+    $("#recordNext").disabled = recordPage >= recordTotalPages;
+    recordsLoaded = true;
+  }
+
   function activateTab(name, { updateHash = true } = {}) {
-    const selected = ["scores", "users", "systems"].includes(name) ? name : "scores";
+    const selected = ["scores", "records", "users", "systems"].includes(name) ? name : "scores";
     document.querySelectorAll("[data-admin-tab]").forEach(button => {
       const active = button.dataset.adminTab === selected;
       button.setAttribute("aria-selected", String(active));
@@ -300,6 +420,9 @@
     document.querySelectorAll("[data-admin-panel]").forEach(panel => {
       panel.hidden = panel.dataset.adminPanel !== selected;
     });
+    if (selected === "records" && !recordsLoaded) {
+      loadRecords().catch(error => fail(error.message));
+    }
     if (selected === "systems" && !readinessLoaded) {
       loadReadiness().catch(error => {
         $("#readinessSummary").textContent = error.message;
@@ -331,9 +454,40 @@
   $("#userNext").addEventListener("click", () => { userPage += 1; renderUsers(); });
   $("#prev").addEventListener("click", () => { scorePage -= 1; loadScores().catch(error => fail(error.message)); });
   $("#next").addEventListener("click", () => { scorePage += 1; loadScores().catch(error => fail(error.message)); });
+  $("#recordPrev").addEventListener("click", () => { recordPage -= 1; loadRecords().catch(error => fail(error.message)); });
+  $("#recordNext").addEventListener("click", () => { recordPage += 1; loadRecords().catch(error => fail(error.message)); });
+  $("#refreshRecords").addEventListener("click", event => refresh(event.currentTarget, () => loadRecords({ preservePage: true })));
   $("#refreshUsers").addEventListener("click", event => refresh(event.currentTarget, loadUsers));
   $("#refreshScores").addEventListener("click", event => refresh(event.currentTarget, () => loadScores({ preservePage: true })));
   $("#refreshReadiness").addEventListener("click", event => refresh(event.currentTarget, loadReadiness));
+  $("#scoreForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    const record = scoreDialogRecord;
+    if (!record) return;
+    const saveButton = $("#scoreDialogSave");
+    saveButton.disabled = true;
+    try {
+      await jsonRequest(`/api/platform/admin/records/${encodeURIComponent(record.id)}/judgment`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          taskCompleted: $("#judgeTaskCompleted").checked,
+          distractor1Cleared: $("#judgeDistractor1").checked,
+          distractor2Cleared: $("#judgeDistractor2").checked,
+          targetPicked: $("#judgeTargetPicked").checked,
+          targetDelivered: $("#judgeTargetDelivered").checked
+        })
+      });
+      $("#scoreDialog").close();
+      await loadScores({ preservePage: true });
+    } catch (error) {
+      fail(error.message);
+    } finally {
+      saveButton.disabled = false;
+    }
+  });
+  $("#scoreDialogCancel").addEventListener("click", () => $("#scoreDialog").close());
+  $("#scoreDialogClose").addEventListener("click", () => $("#scoreDialog").close());
   $("#logoutButton").addEventListener("click", async event => {
     const button = event.currentTarget;
     button.disabled = true;

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>广阳岛 Blockly 闯关</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20260928-start-multiselect-001">
+  <link rel="stylesheet" href="./styles.css?v=20261009-real-score-button-001">
   <link rel="stylesheet" href="./debug-run.css?v=20260918-penalty-log-001">
   <script src="./vendor/blockly/blockly_compressed.js"></script>
   <script src="./vendor/blockly/blocks_compressed.js"></script>
@@ -97,10 +97,10 @@
           <div class="robot-state">
             <div class="state-title">小车状态</div>
             <div class="state-grid">
-              <div><span>位置</span><strong id="poseText">--</strong></div>
-              <div><span>朝向</span><strong id="headingText">--</strong></div>
-              <div><span>夹爪</span><strong id="gripperText">--</strong></div>
-              <div><span>前方</span><strong id="frontText">--</strong></div>
+              <div><span id="poseLabel">位置</span><strong id="poseText">--</strong></div>
+              <div><span id="headingLabel">朝向</span><strong id="headingText">--</strong></div>
+              <div><span id="gripperLabel">夹爪</span><strong id="gripperText">--</strong></div>
+              <div><span id="frontLabel">前方</span><strong id="frontText">--</strong></div>
             </div>
             <ul id="actionLog" class="action-log" aria-label="小车运行解释"></ul>
           </div>
@@ -376,6 +376,6 @@
   <script src="./blockly-navigation-core.js?v=20260827-001"></script>
   <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
   <script src="./lane-follow.js?v=20260928-start-multiselect-001"></script>
-  <script src="./app.js?v=20260928-start-multiselect-002"></script>
+  <script src="./app.js?v=20261009-real-car-status-001"></script>
 </body>
 </html>

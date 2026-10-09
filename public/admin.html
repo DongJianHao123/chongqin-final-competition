@@ -7,7 +7,7 @@
   <title>管理后台 · 统一比赛平台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/platform.css">
-  <link rel="stylesheet" href="/admin.css">
+  <link rel="stylesheet" href="/admin.css?v=20261009-real-score-judgment-001">
 </head>
 <body class="admin-page">
   <header class="admin-topbar">
@@ -53,6 +53,9 @@
       <button type="button" role="tab" aria-selected="true" aria-controls="scorePanel" data-admin-tab="scores">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span>队伍总成绩</span>
       </button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="recordsPanel" data-admin-tab="records">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9 9 0 0 0-9 9Zm9-5v5l3 3"/></svg><span>运行记录</span>
+      </button>
       <button type="button" role="tab" aria-selected="false" aria-controls="userPanel" data-admin-tab="users">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87m-2-12a4 4 0 0 1 0 7.75"/></svg><span>用户管理</span>
       </button>
@@ -63,7 +66,7 @@
 
     <section id="scorePanel" class="admin-panel" role="tabpanel" data-admin-panel="scores">
       <header class="panel-heading">
-        <div><h2>队伍用时排名</h2><p>取 Python 与 Blockly 正式提交中的最短程序执行用时，用时越短排名越高；超时或未完成记为最大用时。</p></div>
+        <div><h2>真实小车成绩</h2><p>逐条查看真实小车的「计时运行」，手动标注任务完成、混淆物清除、目标物夹起与运送情况；扣分规则待定。</p></div>
         <div class="panel-heading-actions">
           <label class="score-group-filter"><span>分组</span><select id="scoreGroupFilter"><option value="">全部分组</option><option value="primary">小学组</option><option value="junior">初中组</option><option value="high">高中组</option></select></label>
           <button id="refreshScores" class="admin-button" type="button">
@@ -73,12 +76,51 @@
       </header>
       <div class="admin-table-wrap">
         <table class="score-table">
-          <thead><tr><th>排名</th><th>队伍</th><th>用时</th><th>地图套题</th></tr></thead>
+          <thead><tr><th>排名</th><th>队伍</th><th>学员</th><th>用时</th><th>打分情况</th><th>操作</th></tr></thead>
           <tbody id="rows"></tbody>
         </table>
       </div>
       <nav class="admin-pagination" aria-label="队伍总成绩分页">
         <span id="pageInfo"></span><div><button id="prev" type="button">上一页</button><button id="next" type="button">下一页</button></div>
+      </nav>
+    </section>
+
+    <dialog id="scoreDialog" class="score-dialog">
+      <form id="scoreForm" class="score-dialog-form">
+        <header>
+          <h3>手动打分</h3>
+          <button type="button" id="scoreDialogClose" class="score-dialog-close" aria-label="关闭">×</button>
+        </header>
+        <p id="scoreDialogMeta" class="score-dialog-meta"></p>
+        <div class="score-criteria">
+          <label><input type="checkbox" id="judgeTaskCompleted"><span>完成任务 / 到达终点</span></label>
+          <label><input type="checkbox" id="judgeDistractor1"><span>混淆物 1 已清除</span></label>
+          <label><input type="checkbox" id="judgeDistractor2"><span>混淆物 2 已清除</span></label>
+          <label><input type="checkbox" id="judgeTargetPicked"><span>目标物已夹起</span></label>
+          <label><input type="checkbox" id="judgeTargetDelivered"><span>目标物已运送到终点</span></label>
+        </div>
+        <footer>
+          <button type="button" id="scoreDialogCancel" class="admin-button">取消</button>
+          <button type="submit" class="admin-button primary" id="scoreDialogSave">保存打分</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <section id="recordsPanel" class="admin-panel" role="tabpanel" data-admin-panel="records" hidden>
+      <header class="panel-heading">
+        <div><h2>运行记录</h2><p>每次「计时运行」的执行明细：实际运行时间、是否到达终点及任务完成情况。</p></div>
+        <button id="refreshRecords" class="admin-button" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg><span>刷新记录</span>
+        </button>
+      </header>
+      <div class="admin-table-wrap">
+        <table class="records-table">
+          <thead><tr><th>时间</th><th>队伍</th><th>学员</th><th>运行环境</th><th>实际运行时间</th><th>到达终点</th><th>任务完成情况</th></tr></thead>
+          <tbody id="recordRows"></tbody>
+        </table>
+      </div>
+      <nav class="admin-pagination" aria-label="运行记录分页">
+        <span id="recordPageInfo"></span><div><button id="recordPrev" type="button">上一页</button><button id="recordNext" type="button">下一页</button></div>
       </nav>
     </section>
 
@@ -109,7 +151,7 @@
       <header class="panel-heading"><div><h2>子系统管理</h2><p>进入对应后台编辑地图、查看程序与积木记录。</p></div></header>
       <section class="readiness-panel" aria-labelledby="readinessTitle">
         <header>
-          <div><h3 id="readinessTitle">平台运行状态</h3><p id="readinessSummary">正在检查三个服务和部署配置…</p></div>
+          <div><h3 id="readinessTitle">平台运行状态</h3><p id="readinessSummary">正在检查平台服务和部署配置…</p></div>
           <button id="refreshReadiness" class="admin-button" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg><span>重新检查</span>
           </button>
@@ -118,18 +160,13 @@
         <div id="readinessConfiguration" class="readiness-configuration"></div>
       </section>
       <div class="system-grid">
-        <article class="system-card python-card">
-          <span class="system-icon">Py</span><div><p class="system-kicker">赛题一 · 共用地图</p><h3>Python 地图与比赛记录</h3><p>编辑任务1～3的 8 / 10 / 12 套地图，并查看 Python 正式提交。</p></div>
-          <a class="admin-button primary" href="/python/admin.html" target="_blank">进入管理</a>
-        </article>
         <article class="system-card blockly-card">
-          <span class="system-icon">积木</span><div><p class="system-kicker">赛题一 · 积木方式</p><h3>Blockly 积木记录</h3><p>查看用户提交的积木结构、生成代码和正式比赛记录。</p></div>
-          <a class="admin-button primary" href="/blockly/admin.html?platform=1" target="_blank">进入管理</a>
+          <span class="system-icon">积木</span><div><p class="system-kicker">赛题一 · 积木方式</p><h3>Blockly 积木与地图</h3><p>编辑比赛地图，查看用户提交的积木结构、生成代码和正式比赛记录。</p></div>
+          <a class="admin-button primary" href="/blockly/admin.html" target="_blank">进入管理</a>
         </article>
       </div>
-      <aside class="admin-tip"><strong>地图分配说明</strong><span>同一队伍的所有账号在任务1中始终使用同一套地图；地图分配可在 Python 地图后台查看。</span></aside>
     </section>
   </main>
-  <script src="/platform-admin.js?v=20260828-2"></script>
+  <script src="/platform-admin.js?v=20261009-real-score-judgment-001"></script>
 </body>
 </html>
