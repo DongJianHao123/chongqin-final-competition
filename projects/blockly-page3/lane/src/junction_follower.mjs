@@ -3,11 +3,11 @@ import {JunctionPolicy} from './junction_policy.mjs';
 import {RUNTIME_CONFIG} from './runtime_config.mjs';
 import {supportedCameraSize} from './camera_geometry.mjs';
 export {DEFAULT_FOLLOW_PARAMS} from './follow_config.mjs';
+export {DETECTION_WIDTH,DETECTION_HEIGHT,supportedCameraSize} from './camera_geometry.mjs';
 
 /** Browser-only detection and one-junction control over existing motor endpoints. */
 export function createJunctionFollower(options={}){
   const base=new URL(options.motorBaseUrl||'/',globalThis.location?.href||'http://localhost/').href.replace(/\/$/,'');
-  const cameraBase=new URL(options.cameraBaseUrl||'/',globalThis.location?.href||'http://localhost/').href.replace(/\/$/,'');
   const now=()=>performance.now()/1000;
   let params=resolveFollowParams(options.params),run=null,stopping=null,destroyed=false;
   const state=()=>structuredClone(run?.state??{status:'idle',phase:'idle',reason:null,stop_confirmed:null});
@@ -200,7 +200,7 @@ export function createJunctionFollower(options={}){
         notify('onResult',result);
       };
       current.started=now();current.state.status='running';current.state.phase='approach';
-      worker.postMessage({mode:'live',fps:15,includePixels:true,cameraBaseUrl:cameraBase,
+      worker.postMessage({type:'init',mode:'frames',includePixels:true,
         params:{...settings,crossingStopEnabled:false}});
       current.timer=setInterval(()=>{
         if(current.pending||!active(current))return;
@@ -226,6 +226,14 @@ export function createJunctionFollower(options={}){
       params=resolveFollowParams(patch,params);return {...params};
     },
     getConfig(){return {...params};},start,stop:()=>finish(),status:state,
+    // Feed a normalized 320x240 RGBA frame (an ArrayBuffer) into the detection
+    // worker. The caller samples the already-open camera <img> on the main
+    // thread, so the worker performs no camera network I/O.
+    pushFrame(rgba,width,height){
+      const worker=run?.worker;
+      if(!worker)return;
+      try{worker.postMessage({type:'frame',rgba,width,height},[rgba]);}catch{}
+    },
     async destroy(){
       destroyed=true;
       globalThis.document?.removeEventListener('visibilitychange',hide);

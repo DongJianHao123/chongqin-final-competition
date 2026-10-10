@@ -98,6 +98,45 @@
     }
   }
 
+  // Sample the already-open camera <img> on the main thread and feed normalized
+  // 320x240 RGBA frames into the detection worker. Reusing the preview stream
+  // avoids a second fetch (which the browser blocks as mixed content on HTTPS).
+  function startFrameSampler(cameraElement, sdk, onFrame) {
+    if (!cameraElement || !sdk?.supportedCameraSize) return { stop() {} };
+    const { supportedCameraSize, DETECTION_WIDTH, DETECTION_HEIGHT } = sdk;
+    const canvas = document.createElement("canvas");
+    canvas.width = DETECTION_WIDTH;
+    canvas.height = DETECTION_HEIGHT;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    let stopped = false;
+    function sample() {
+      if (stopped) return;
+      const naturalWidth = cameraElement.naturalWidth;
+      const naturalHeight = cameraElement.naturalHeight;
+      if (!naturalWidth || !naturalHeight) return;
+      try {
+        if (supportedCameraSize(naturalWidth, naturalHeight)) {
+          context.drawImage(cameraElement, 0, 0, DETECTION_WIDTH, DETECTION_HEIGHT);
+        } else {
+          const scale = Math.min(DETECTION_WIDTH / naturalWidth, DETECTION_HEIGHT / naturalHeight);
+          context.fillStyle = "#000";
+          context.fillRect(0, 0, DETECTION_WIDTH, DETECTION_HEIGHT);
+          const w = Math.round(naturalWidth * scale);
+          const h = Math.round(naturalHeight * scale);
+          context.drawImage(cameraElement, Math.floor((DETECTION_WIDTH - w) / 2), Math.floor((DETECTION_HEIGHT - h) / 2), w, h);
+        }
+        const imageData = context.getImageData(0, 0, DETECTION_WIDTH, DETECTION_HEIGHT);
+        onFrame(imageData.data.buffer, naturalWidth, naturalHeight);
+      } catch (error) {
+        // Tainted canvas (missing CORS on the camera stream) or an undecoded
+        // frame. The follower's freshness timeout surfaces a persistent failure
+        // as "摄像头画面不可用".
+      }
+    }
+    const timer = setInterval(sample, 1000 / 15);
+    return { stop() { stopped = true; clearInterval(timer); } };
+  }
+
   function start(options = {}) {
     const params = {};
     for (const [name, fallback, min, max] of [["base", 24, 0, 100], ["kp", 0.05, 0, 10], ["maxCorrection", 2, 0, 100]]) {
@@ -159,11 +198,12 @@
         // Two callers can both await the same previous stop. Only one may claim the next run.
         if (activeRun && activeRun.control !== control) throw new Error("已有循迹任务正在运行");
         activeRun = { control, finished: () => finished };
+        let sdk = null;
         setup = (async () => {
-          const { createJunctionFollower } = await loadSdk();
+          sdk = await loadSdk();
+          const { createJunctionFollower } = sdk;
           if (cancelled || signal?.aborted) throw cancelledError();
           follower = createJunctionFollower({
-            cameraBaseUrl: options.baseUrl,
             motorBaseUrl: options.baseUrl,
             params,
             onState: stateChanged,
@@ -176,14 +216,19 @@
           });
           return follower.start();
         })();
+        let sampling = null;
         try {
           await setup;
           if (cancelled || signal?.aborted) {
             await follower?.stop();
             throw cancelledError();
           }
+          sampling = startFrameSampler(options.cameraElement, sdk, (rgba, width, height) => {
+            follower?.pushFrame(rgba, width, height);
+          });
           return await completion;
         } finally {
+          sampling?.stop();
           finished = true;
         }
       })();

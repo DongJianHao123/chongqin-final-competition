@@ -8123,8 +8123,9 @@ function updateLaneFollowHud({ result, wheels }) {
 
 function showLaneFollowCanvas() {
   if (!laneFollowCanvas) return;
-  const view = cameraStream?.closest(".camera-view");
-  if (view) view.style.display = "none";
+  // Keep the camera <img> rendered underneath so its MJPEG stream keeps
+  // decoding; the SDK samples its pixels for detection. The overlay canvas is
+  // opaque and paints on top, so the raw view is not visible during follow.
   laneFollowCanvas.hidden = false;
   if (laneFollowHud) laneFollowHud.hidden = false;
 }
@@ -8133,8 +8134,6 @@ function hideLaneFollowCanvas() {
   if (!laneFollowCanvas) return;
   laneFollowCanvas.hidden = true;
   if (laneFollowHud) laneFollowHud.hidden = true;
-  const view = cameraStream?.closest(".camera-view");
-  if (view) view.style.display = "";
 }
 
 async function followLineToJunction(context, baseValue, kpValue, maxCorrectionValue) {
@@ -8145,14 +8144,20 @@ async function followLineToJunction(context, baseValue, kpValue, maxCorrectionVa
   addLog(`真实小车：自动巡线（基础速度 ${params.base}%，KP ${params.kp}，最大修正 ${params.maxCorrection}%）。`);
   const baseUrl = context.robotBaseUrl || getValidatedRobotBaseUrl();
   const resumePreview = Boolean(activeRealCameraBaseUrl);
+  // Reuse the already-open <img> preview stream for detection instead of
+  // opening a second fetch stream (which HTTPS blocks as mixed content). If the
+  // preview is not running yet, start it so the <img> has frames to sample.
+  // (startRealCameraPreview bails when laneFollowUsesCamera is set, so start it
+  // first, then claim the camera for follow.)
+  if (!resumePreview) startRealCameraPreview();
   laneFollowUsesCamera = true;
-  await stopRealCameraPreview({ sendClose: false, message: "自动巡线中，显示识别画面" });
   showLaneFollowCanvas();
   let lane;
   try {
     lane = BlocklyLaneFollow.start({
       baseUrl,
       canvas: laneFollowCanvas,
+      cameraElement: cameraStream,
       ...params,
       signal: context.signal,
       onState: state => {
@@ -8179,7 +8184,8 @@ async function followLineToJunction(context, baseValue, kpValue, maxCorrectionVa
     finally {
       hideLaneFollowCanvas();
       laneFollowUsesCamera = false;
-      if (resumePreview) startRealCameraPreview();
+      // The preview <img> was never stopped (the SDK reuses its stream), so
+      // hideLaneFollowCanvas() simply reveals it again — no restart needed.
     }
   }
 }
