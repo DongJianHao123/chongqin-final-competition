@@ -8175,6 +8175,7 @@ async function followLineToJunction(context, baseValue, kpValue, maxCorrectionVa
     return result;
   } finally {
     try { await lane?.stop(); }
+    catch (error) { addLog(`循迹停止确认失败（可忽略）：${error.message}`); }
     finally {
       hideLaneFollowCanvas();
       laneFollowUsesCamera = false;

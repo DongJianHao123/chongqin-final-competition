@@ -112,3 +112,15 @@ Blockly 全选改为选中所有连贯积木集合（不分主函数内外）：
 
 ## 2026-10-10 15:50
 移植优化后巡线 SDK（10 个 .mjs 模块 + lane-follow.js 适配器）到统一项目：server.js 增加 .mjs MIME 与 10 条 /lane/src/*.mjs 静态白名单；app.js 集成新巡线（laneFollowUsesCamera 互斥标志、startRealCameraPreview 守卫、followLineToJunction 重写含 reachedLineEnd/恢复预览、updateLaneFollowHud 交点文案+Number.isFinite 轮速）；index.html 缓存 bump 到 lane-sdk-001。node --check 全部通过。
+
+## 2026-10-10 16:27
+修复线上「地图数据格式不正确」：根因是 guangyang-map-config.js/guangyang-scoring.js 内容改了（移除任务二/三、去掉终点条件）但 index.html/admin.html 的 ?v= 缓存版本没 bump，服务端对带 ?v= 的静态资源返回 immutable 一年缓存，浏览器一直用旧 3 任务版本导致 expectedMapCount=3 而后端返回 1。已把两个文件的 ?v= bump 到 20261010-single-task-001（并同步 admin.html 的 styles.css）。
+
+## 2026-10-10 16:27
+模拟器巡线(followLine)改为行驶到路口后再停：followBlocklyLine 去掉 STOP_BEFORE_JUNCTION_CM=12 的提前停，直接开到道路端点（路口节点）再停，日志文案由「路口前停车」改为「到达路口并停车」；node --check 通过。
+
+## 2026-10-10 16:57
+真实小车单积木出错不中断：app.js 新增 guardRealRobotBlock + REAL_ROBOT_BLOCK_METHODS，把 forward/backward/turn/wait/grab/release/sees/detect/approach/followLine 包一层 try/catch，出错等 3s 后继续下一条积木；sendRealRobotAction 连接失败由 abort 改为抛普通 Error。同时完成模拟器自动靠近框宽与实车对齐（网球280/橙子310→16cm）。index.html app.js ?v= bump 到 real-error-continue-001。node --check 通过。
+
+## 2026-10-10 17:06
+server.js textAssetCacheControl 改为文本资源统一 no-cache + ETag 条件请求(304)，去掉 ?v= 的一年 immutable 强缓存，根治「改了内容漏 bump ?v= 导致线上旧代码」。node --check 通过。
