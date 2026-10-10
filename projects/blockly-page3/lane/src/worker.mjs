@@ -148,8 +148,14 @@ onmessage = async ({data}) => {
         await new Promise(resolve => setTimeout(resolve, 1000 / data.fps));
       }
     } else {
-      const opened = await fetch(`${data.cameraBaseUrl}/api/camera/open`, {method: 'POST', signal: controller.signal});
-      if (!opened.ok || !(await opened.json()).camera_on) throw new Error('无法打开摄像头');
+      try {
+        const opened = await fetch(`${data.cameraBaseUrl}/api/camera/open`, {method: 'POST', signal: controller.signal});
+        if (!opened.ok || !(await opened.json()).camera_on) throw new Error('无法打开摄像头');
+      } catch (error) {
+        // 摄像头通常已由预览开启，open 只是冗余的“确保开启”；失败（含 HTTPS 页面
+        // mixed-content 拦截、或摄像头本就在线）不应阻断循迹，只要能拉到视频流就继续。
+        if (error.name === 'AbortError') throw error;
+      }
       await reconnectingStream(`${data.cameraBaseUrl}/api/camera/stream`);
     }
   } catch (error) { if (error.name !== 'AbortError') fail(error); }
