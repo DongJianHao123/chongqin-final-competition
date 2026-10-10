@@ -211,9 +211,9 @@ function mimeType(filePath) {
 
 function textAssetCacheControl(pathname, searchParams) {
   if (!TEXT_STATIC_PATH_PATTERN.test(pathname)) return "no-store, max-age=0";
-  return searchParams?.get("v")
-    ? "public, max-age=31536000, immutable"
-    : "public, max-age=3600, must-revalidate";
+  // 文本资源统一走 ETag 条件请求（304 复用、变更即更新）。
+  // 不再对带 ?v= 的版本做一年 immutable 强缓存，避免「改了内容却漏 bump 版本」导致线上长期用旧代码。
+  return "no-cache";
 }
 
 function assetEtag(data) {

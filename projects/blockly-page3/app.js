@@ -7241,6 +7241,10 @@ async function approachBlocklyVisionTarget(context, targetValue, distanceValue =
 }
 
 const PRIMARY_APPROACH_MODELS = Object.freeze(["tennis", "orange"]);
+// 与真实小车一致：到达夹取距离（约 16cm）时，网球框宽 280px、橙子框宽 310px（橙子更大）。
+// 模拟器按「框宽与距离成反比」把框宽阈值换算成停靠距离，使同一份程序在模拟器与实车得到一致结果。
+const APPROACH_GRAB_DISTANCE_CM = 16;
+const APPROACH_MODEL_GRAB_BOX_WIDTH = Object.freeze({ tennis: 280, orange: 310 });
 
 function visibleVisionModels(model, minimumConfidence) {
   const style = String(model ?? "").trim();
@@ -7269,7 +7273,7 @@ async function approachBlocklyVisionModel(context, modelValue, speedValue = 30, 
   if (!Number.isFinite(boxWidth) || boxWidth < 1 || boxWidth > 2000) {
     throw new Error("自动靠近目标框宽必须是 1 到 2000 像素");
   }
-  const stopDistanceCm = Math.max(5, Math.min(40, Math.round(6400 / boxWidth)));
+  const stopDistanceCm = Math.max(5, Math.min(40, Math.round(APPROACH_GRAB_DISTANCE_CM * APPROACH_MODEL_GRAB_BOX_WIDTH[model] / boxWidth)));
   const maxStepCm = Math.max(1, Math.min(25, Math.round(speed * 0.25)));
   const maxTurnDeg = Math.max(2, Math.min(25, Math.round(turnSpeed * 0.25)));
   context.visionQueryCount += 1;
@@ -7520,7 +7524,7 @@ async function followBlocklyLine(context, baseValue, kpValue, maxCorrectionValue
   beginRoadControl(context, "follow_line");
   const params = normalizeFollowLineParams(baseValue, kpValue, maxCorrectionValue);
   actionCount += 1;
-  addLog(`自动巡线：沿地面黄线行驶，基础速度 ${params.base}%，遇到路口前停车。`);
+  addLog(`自动巡线：沿地面黄线行驶，基础速度 ${params.base}%，行驶到路口后停车。`);
   const network = getPrimaryNavigationNetwork();
   const state = network.roadState(robotPose, primaryWorldUnitsToCm(frontDistance()));
   if (!state.onRoad || !state.roadId) {
@@ -7539,27 +7543,24 @@ async function followBlocklyLine(context, baseValue, kpValue, maxCorrectionValue
   }
   const nodeId = naturalDirection > 0 ? record.toNodeId : record.fromNodeId;
   const node = network.node(nodeId);
-  // 只在分叉路口（3 条及以上道路交汇）前停车；道路尽头（单条道路端点）则停到尽头前。
+  // 只在分叉路口（3 条及以上道路交汇）停车；道路尽头（单条道路端点）则停到尽头。
   const stoppedBy = node.roadIds.length >= 3 ? "junction" : "road_end";
-  // 与真实小车一致：巡线在分叉路口（道路端点）前 12cm 停下，不压上路口节点。
-  const STOP_BEFORE_JUNCTION_CM = 12;
+  // 巡线行驶到路口（道路端点）后再停下，不再提前 12cm 停。
   const endpointProgress = naturalDirection > 0 ? record.lengthCm : 0;
   const remainingToEndCm = Math.abs(endpointProgress - projection.progressCm);
-  const reserveCm = Math.min(STOP_BEFORE_JUNCTION_CM, remainingToEndCm);
-  const stopProgress = endpointProgress - naturalDirection * reserveCm;
-  const requestedDistanceCm = Math.abs(stopProgress - projection.progressCm);
+  const requestedDistanceCm = remainingToEndCm;
   if (requestedDistanceCm <= 0.1) {
     setStatus(stoppedBy === "junction" ? "沿线循迹已到路口" : "沿线循迹结束");
-    addLog("自动巡线完成：已到达路口前并停车。");
+    addLog("自动巡线完成：已到达路口并停车。");
     return finishRoadControl(context, true, stoppedBy, state.roadId, 0, 0);
   }
   const speed = Math.round(Math.max(10, Math.min(100, params.base)));
-  const path = network.pathAlong(state.roadId, projection.progressCm, stopProgress);
+  const path = network.pathAlong(state.roadId, projection.progressCm, endpointProgress);
   const driven = await driveBlocklyNavigationPath(context, path, speed, requestedDistanceCm, true);
   const finalStoppedBy = driven.stoppedBy || stoppedBy;
   if (finalStoppedBy === "junction") {
     setStatus("沿线循迹已到路口");
-    addLog("自动巡线完成：已到达路口前并停车。");
+    addLog("自动巡线完成：已到达路口并停车。");
   } else {
     setStatus("沿线循迹结束");
   }
@@ -8011,12 +8012,7 @@ async function sendRealRobotAction(action, { speed = REAL_DEFAULT_SPEED, distanc
   } catch (error) {
     if (error?.name === "AbortError" || context?.signal.aborted) throw new RunCancelledError(context?.reason || "stopped");
     setRealStopHazard(true);
-    setStatus("真实小车连接失败");
-    addLog(`真实小车指令发送失败：${error.message}。如果当前页面是 https，请用本地 http 页面控制小车。`);
-    if (context) {
-      abortRunContext(context, "connection-error");
-      throw new RunCancelledError("connection-error");
-    }
+    if (context) throw new Error(`真实小车指令发送失败：${error.message}`);
     updateRunControls();
     return false;
   }
@@ -8334,8 +8330,29 @@ async function approachRealRobotVisionTarget(context, modelValue, speedValue = 3
   }
 }
 
+// 真实小车：单个积木执行出错时不中断整个程序，等待 3 秒后继续下一条积木。
+const REAL_ROBOT_BLOCK_METHODS = Object.freeze([
+  "forward", "backward", "forwardSeconds", "backwardSeconds",
+  "turn", "turnAngle", "wait", "grab", "release",
+  "sees", "detect", "approach", "followLine"
+]);
+
+function guardRealRobotBlock(context, action) {
+  return async (...args) => {
+    try {
+      return await action(...args);
+    } catch (error) {
+      if (error instanceof RunCancelledError) throw error;
+      setStatus("积木出错，3 秒后继续");
+      addLog(`积木执行出错：${error.message}。等待 3 秒后执行下一条积木。`);
+      await sleepForRun(3000, context);
+      return undefined;
+    }
+  };
+}
+
 function makeRealRobotApi(context) {
-  return {
+  const api = {
     forward: distanceCm => realMoveCentimeters("up", distanceCm, "前进", context, getRealMoveSpeed()),
     backward: distanceCm => realMoveCentimeters("down", distanceCm, "后退", context, getRealMoveSpeed()),
     forwardSeconds: seconds => realMove("up", seconds, "前进", context, getRealMoveSpeed()),
@@ -8415,6 +8432,10 @@ function makeRealRobotApi(context) {
       throw new RunCancelledError("loop-limit");
     }
   };
+  for (const name of REAL_ROBOT_BLOCK_METHODS) {
+    if (typeof api[name] === "function") api[name] = guardRealRobotBlock(context, api[name]);
+  }
+  return api;
 }
 
 async function cancelActiveRun(reason = "stopped", { sendHardwareStop = true } = {}) {
