@@ -38,9 +38,7 @@ const EXECUTION_METHODS = Object.freeze([
 ]);
 const EXECUTION_METHOD_SET = new Set(EXECUTION_METHODS);
 const PRIMARY_TASKS = Object.freeze({
-  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1" }),
-  "GYI-PRIMARY-02": Object.freeze({ name: "广阳岛综合任务2" }),
-  "GYI-PRIMARY-03": Object.freeze({ name: "广阳岛综合任务3" })
+  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1" })
 });
 const DEFAULT_PARTICIPANT_GROUP = "primary";
 const PARTICIPANT_GROUP_ALIASES = Object.freeze({
@@ -545,7 +543,7 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
       });
       return;
     }
-    const workspaceMatch = url.pathname.match(/^\/api\/workspaces\/(GYI-PRIMARY-0[123])$/);
+    const workspaceMatch = url.pathname.match(/^\/api\/workspaces\/(GYI-PRIMARY-01)$/);
     if (workspaceMatch) {
       if (request.method !== "PUT") throw new HttpError(405, "METHOD_NOT_ALLOWED", "工作区接口只支持保存。 ");
       assertSameOrigin(request);
@@ -596,7 +594,7 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
       sendJson(response, 200, { schemaVersion: "chenlong.blockly-admin-maps/v1", maps, authoritative: false });
       return;
     }
-    const adminMapMatch = url.pathname.match(/^\/api\/admin\/maps\/(GYI-PRIMARY-0[123])$/);
+    const adminMapMatch = url.pathname.match(/^\/api\/admin\/maps\/(GYI-PRIMARY-01)$/);
     if (adminMapMatch && request.method === "PUT") {
       const { user } = requireAdmin(request);
       assertSameOrigin(request);

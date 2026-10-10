@@ -10,16 +10,10 @@
   let userPage = 1;
   let users = [];
   let bestTeam = null;
-  let readinessLoaded = false;
   let recordPage = 1;
   let recordTotalPages = 1;
   let recordsLoaded = false;
   let scoreDialogRecord = null;
-
-  const readinessLabels = {
-    gateway: "统一入口",
-    blockly: "Blockly 赛场"
-  };
 
   function fail(message) {
     $("#notice").hidden = false;
@@ -40,71 +34,6 @@
     }
     if (!response.ok) throw new Error(payload?.error?.message || "后台数据读取失败。");
     return payload;
-  }
-
-  function readinessStatus(value) {
-    return value === "ok" ? { kind: "ok", label: "正常" } : { kind: "error", label: "异常" };
-  }
-
-  function configurationStatus(value, enabledLabel, disabledLabel) {
-    if (value === true) return { kind: "ok", label: enabledLabel };
-    if (value === false) return { kind: "warning", label: disabledLabel };
-    return { kind: "unknown", label: "无法确认" };
-  }
-
-  function statusItem(title, status, detail = "") {
-    const item = document.createElement("article");
-    item.className = "readiness-item";
-    item.dataset.kind = status.kind;
-    const heading = document.createElement("div");
-    heading.append(textElement("strong", "", title), textElement("span", "readiness-badge", status.label));
-    item.append(heading);
-    if (detail) item.append(textElement("p", "", detail));
-    return item;
-  }
-
-  function renderReadiness(payload) {
-    const checks = payload?.checks || {};
-    const configuration = payload?.configuration || {};
-    const degraded = payload?.status !== "ok";
-    $("#readinessSummary").textContent = degraded
-      ? "发现服务或部署配置异常，请在比赛开始前处理。"
-      : "平台服务均可访问；请同时确认下方公网部署配置。";
-    $("#readinessSummary").dataset.kind = degraded ? "warning" : "ok";
-
-    $("#readinessServices").replaceChildren(...Object.entries(readinessLabels).map(([key, label]) => {
-      const status = readinessStatus(checks[key]?.status);
-      const detail = status.kind === "ok" ? "服务响应正常" : "当前无法正常访问";
-      return statusItem(label, status, detail);
-    }));
-
-    $("#readinessConfiguration").replaceChildren(
-      statusItem(
-        "公网访问地址",
-        configurationStatus(configuration.publicOriginConfigured, "已配置", "未配置"),
-        "用于跨子系统跳转和官网单点登录回跳。"
-      ),
-      statusItem(
-        "反向代理信任",
-        configurationStatus(configuration.trustedProxyConfigured, "已配置", "未配置"),
-        "经 Nginx 或云代理部署时，应只信任实际代理地址。"
-      ),
-      statusItem(
-        "官网单点登录",
-        configurationStatus(configuration.officialSsoConfigured, "已启用", "未启用"),
-        "未配置密钥时，官网无法安全跳转登录。"
-      )
-    );
-  }
-
-  async function loadReadiness() {
-    const response = await fetch("/api/readiness", { credentials: "same-origin", cache: "no-store" });
-    const payload = await response.json().catch(() => null);
-    if (!payload || payload.schemaVersion !== "chenlong.competition-platform-readiness/v1") {
-      throw new Error("平台状态接口返回异常，请检查统一入口服务。");
-    }
-    renderReadiness(payload);
-    readinessLoaded = true;
   }
 
   function textElement(tag, className, value) {
@@ -423,12 +352,6 @@
     if (selected === "records" && !recordsLoaded) {
       loadRecords().catch(error => fail(error.message));
     }
-    if (selected === "systems" && !readinessLoaded) {
-      loadReadiness().catch(error => {
-        $("#readinessSummary").textContent = error.message;
-        $("#readinessSummary").dataset.kind = "warning";
-      });
-    }
     if (updateHash) history.replaceState(null, "", `#${selected}`);
   }
 
@@ -459,7 +382,6 @@
   $("#refreshRecords").addEventListener("click", event => refresh(event.currentTarget, () => loadRecords({ preservePage: true })));
   $("#refreshUsers").addEventListener("click", event => refresh(event.currentTarget, loadUsers));
   $("#refreshScores").addEventListener("click", event => refresh(event.currentTarget, () => loadScores({ preservePage: true })));
-  $("#refreshReadiness").addEventListener("click", event => refresh(event.currentTarget, loadReadiness));
   $("#scoreForm").addEventListener("submit", async event => {
     event.preventDefault();
     const record = scoreDialogRecord;

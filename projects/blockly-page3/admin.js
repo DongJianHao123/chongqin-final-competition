@@ -6,7 +6,7 @@
   const teamScoreRules = globalThis.ChenlongAdminTeamScores;
   if (!teamScoreRules) throw new Error("队伍最高分汇总规则没有加载");
   const PAGE_SIZE = 12;
-  const TEAM_SCORE_TASK_IDS = Object.freeze(["GYI-PRIMARY-01", "GYI-PRIMARY-02", "GYI-PRIMARY-03"]);
+  const TEAM_SCORE_TASK_IDS = Object.freeze(["GYI-PRIMARY-01"]);
   const GROUP_LABELS = Object.freeze({ primary: "小学组", junior: "初中组", high: "高中组" });
   const PACKAGE_STYLE_LABELS = Object.freeze({ box: "纸箱", orange: "橙子", tennis: "网球" });
   const QUANTITY_FIELDS = Object.freeze([
@@ -19,6 +19,7 @@
   const CAPABILITY_USAGE_SCHEMA_VERSION = "chenlong.blockly-runtime-capability-usage/v1";
   const platformMode = new URLSearchParams(window.location.search).get("platform") === "1"
     || window.location.pathname.startsWith("/blockly/");
+  const mapsOnly = new URLSearchParams(window.location.search).get("maps") === "1";
   const CAPABILITY_GROUPS = Object.freeze([
     Object.freeze({ key: "navigationSensorMethods", label: "导航传感", kind: "navigation" }),
     Object.freeze({ key: "roadControlMethods", label: "道路控制", kind: "road" }),
@@ -209,23 +210,22 @@
     button.disabled = true;
     try {
       const rows = teamChallengeBestRows();
-      const header = ["队伍名称", "所在小组", "任务1最高分", "任务2最高分", "任务3最高分", "三项总分"];
+      const header = ["队伍名称", "所在小组", ...TEAM_SCORE_TASK_IDS.map(() => "最高分")];
       const data = rows.map(team => [
         team.teamName,
         team.group === "mixed" ? "分组不一致" : (GROUP_LABELS[team.group] || "—"),
-        ...TEAM_SCORE_TASK_IDS.map(taskId => team.scores[taskId] ?? ""),
-        team.totalScore
+        ...TEAM_SCORE_TASK_IDS.map(taskId => team.scores[taskId] ?? "")
       ]);
       const content = `\uFEFF${[header, ...data].map(row => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
       const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));
       const link = document.createElement("a");
       link.href = url;
-      link.download = `blockly-各队三项最高分-${new Date().toISOString().slice(0, 10)}.csv`;
+      link.download = `blockly-各队最高分-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.append(link);
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      say(`已导出 ${rows.length} 支队伍的三项最高分汇总。`, "success");
+      say(`已导出 ${rows.length} 支队伍的最高分汇总。`, "success");
     } catch (error) { say(error.message || "导出失败。", "error"); }
     finally { button.disabled = false; }
   }
@@ -273,15 +273,13 @@
   function filteredRecords() {
     const query = document.querySelector("#adminRecordFilter").value.trim().toLocaleLowerCase("zh-CN");
     const group = document.querySelector("#adminRecordGroupFilter").value;
-    const taskId = document.querySelector("#adminRecordTaskFilter").value;
     const scope = document.querySelector("#adminRecordScope").value;
     const sort = document.querySelector("#adminRecordSort").value;
     let records = state.records.filter(record => {
       const user = record.user || {};
       const text = `${user.username || ""} ${user.teamName || ""}`.toLocaleLowerCase("zh-CN");
       return (!query || text.includes(query))
-        && (!group || user.group === group)
-        && (!taskId || record.taskId === taskId);
+        && (!group || user.group === group);
     });
     if (scope === "team-task-best") {
       const bestByTeamAndTask = new Map();
@@ -363,7 +361,7 @@
     if (!page.items.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
-      cell.colSpan = 6;
+      cell.colSpan = 3;
       cell.textContent = "当前没有参赛队伍。";
       row.append(cell);
       teamScoreBody.append(row);
@@ -378,7 +376,6 @@
         const score = team.scores[taskId];
         appendCell(row, score === null ? "—" : `${score}/100`);
       });
-      appendCell(row, `${team.totalScore}/300`);
       teamScoreBody.append(row);
     });
   }
@@ -630,7 +627,8 @@
 
   async function loadMaps() {
     const payload = await request("/api/admin/maps");
-    if (payload?.schemaVersion !== "chenlong.blockly-admin-maps/v1" || !Array.isArray(payload.maps) || payload.maps.length !== 3) throw new Error("地图数据格式不正确。 ");
+    const expectedMapCount = Object.keys(mapRules.TASKS).length;
+    if (payload?.schemaVersion !== "chenlong.blockly-admin-maps/v1" || !Array.isArray(payload.maps) || payload.maps.length !== expectedMapCount) throw new Error("地图数据格式不正确。 ");
     state.maps = new Map(payload.maps.map(config => [config.taskId, { ...config, layout: mapRules.normalizeLayout(config.taskId, config.layout) }]));
     state.mapDirty = false;
     renderMapEditor();
@@ -699,7 +697,7 @@
   document.querySelector("#closeAdminRecordDialog").addEventListener("click", closeRecordDialog);
   document.querySelector("#adminRecordDialog").addEventListener("click", event => { if (event.target === event.currentTarget) closeRecordDialog(); });
   ["#adminUserFilter", "#adminUserGroupFilter"].forEach(selector => document.querySelector(selector).addEventListener("input", () => { state.userPage = 1; renderUsers(); }));
-  ["#adminRecordFilter", "#adminRecordGroupFilter", "#adminRecordTaskFilter", "#adminRecordScope", "#adminRecordSort"].forEach(selector => document.querySelector(selector).addEventListener("input", () => { state.recordPage = 1; renderRecords(); }));
+  ["#adminRecordFilter", "#adminRecordGroupFilter", "#adminRecordScope", "#adminRecordSort"].forEach(selector => document.querySelector(selector).addEventListener("input", () => { state.recordPage = 1; renderRecords(); }));
   document.querySelector("#adminUsersPrevious").addEventListener("click", () => { state.userPage -= 1; renderUsers(); });
   document.querySelector("#adminUsersNext").addEventListener("click", () => { state.userPage += 1; renderUsers(); });
   document.querySelector("#adminRecordsPrevious").addEventListener("click", () => { state.recordPage -= 1; renderRecords(); });
@@ -721,5 +719,9 @@
   });
   window.addEventListener("beforeunload", event => { if (state.mapDirty) { event.preventDefault(); event.returnValue = ""; } });
   if (window.lucide) window.lucide.createIcons();
+  if (mapsOnly) {
+    document.body.classList.add("maps-only");
+    switchTab("maps");
+  }
   void initialize();
 })();

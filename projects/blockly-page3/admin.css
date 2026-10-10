@@ -60,3 +60,10 @@
   font-size: 0.72rem;
   overflow-wrap: anywhere;
 }
+
+body.maps-only .primary-admin-topbar,
+body.maps-only .primary-admin-heading,
+body.maps-only .primary-admin-summary,
+body.maps-only .primary-admin-tabs {
+  display: none;
+}

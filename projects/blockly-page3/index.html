@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>广阳岛 Blockly 闯关</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20261009-bin-001">
+  <link rel="stylesheet" href="./styles.css?v=20261010-blockly-toast-001">
   <link rel="stylesheet" href="./debug-run.css?v=20260918-penalty-log-001">
   <script src="./vendor/blockly/blockly_compressed.js"></script>
   <script src="./vendor/blockly/blocks_compressed.js"></script>
@@ -76,6 +76,9 @@
             <button id="zoomOutBlocksButton" title="缩小积木"><i data-lucide="minus"></i></button>
             <button id="disableBlocksButton" title="禁用/启用选中的积木"><i data-lucide="ban"></i></button>
             <button id="runSelectedBlocksButton" title="运行选中的积木"><i data-lucide="play"></i></button>
+            <button id="selectAllBlocksButton" title="全选所有积木（Ctrl+A）"><i data-lucide="check-square"></i></button>
+            <button id="copyBlocksButton" title="复制选中的积木（Ctrl+C）"><i data-lucide="copy"></i></button>
+            <button id="pasteBlocksButton" title="粘贴积木（Ctrl+V）"><i data-lucide="clipboard-paste"></i></button>
             <button id="deleteBlocksButton" title="删除选中的积木"><i data-lucide="trash-2"></i></button>
           </div>
         </div>
@@ -375,7 +378,7 @@
   <script src="./guangyang-map-config.js?v=20261009-bin-scale-001"></script>
   <script src="./blockly-navigation-core.js?v=20260827-001"></script>
   <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
-  <script src="./lane-follow.js?v=20260928-start-multiselect-001"></script>
-  <script src="./app.js?v=20261010-sim-follow-initial-offset-001"></script>
+  <script src="./lane-follow.js?v=20261010-lane-sdk-001"></script>
+  <script src="./app.js?v=20261010-lane-sdk-001"></script>
 </body>
 </html>

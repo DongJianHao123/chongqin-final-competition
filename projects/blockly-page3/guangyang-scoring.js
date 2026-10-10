@@ -79,9 +79,8 @@
     const targets = clamp(Math.trunc(Number(targetDeliveredCount) || 0), 0, safeTargetTotal);
     const distractors = clamp(Math.trunc(Number(distractorClearedCount) || 0), 0, safeDistractorTotal);
     const failedObstacles = clamp(Math.trunc(Number(failedObstacleCount) || 0), 0, safeObstacleTotal);
-    const goal = Boolean(goalReached) ? 1 : 0;
-    const objectiveTotal = safeCheckpointTotal + safeTargetTotal + safeDistractorTotal + 1;
-    const objectiveCompleted = checkpoints + targets + distractors + goal;
+    const objectiveTotal = safeCheckpointTotal + safeTargetTotal + safeDistractorTotal;
+    const objectiveCompleted = checkpoints + targets + distractors;
     const avoidanceCompleted = objectiveCompleted === objectiveTotal ? safeObstacleTotal - failedObstacles : 0;
     const total = objectiveTotal + safeObstacleTotal;
     const completed = objectiveCompleted + avoidanceCompleted;

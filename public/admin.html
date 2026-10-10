@@ -7,7 +7,7 @@
   <title>管理后台 · 统一比赛平台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/platform.css">
-  <link rel="stylesheet" href="/admin.css?v=20261009-real-score-judgment-001">
+  <link rel="stylesheet" href="/admin.css?v=20261010-admin-maps-001">
 </head>
 <body class="admin-page">
   <header class="admin-topbar">
@@ -60,7 +60,7 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2m7-10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87m-2-12a4 4 0 0 1 0 7.75"/></svg><span>用户管理</span>
       </button>
       <button type="button" role="tab" aria-selected="false" aria-controls="systemPanel" data-admin-tab="systems">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.5 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.5 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.12.37.34.71.6 1 .3.29.7.43 1.1.4h.1a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg><span>系统管理</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg><span>地图编辑</span>
       </button>
     </nav>
 
@@ -148,25 +148,10 @@
     </section>
 
     <section id="systemPanel" class="admin-panel" role="tabpanel" data-admin-panel="systems" hidden>
-      <header class="panel-heading"><div><h2>子系统管理</h2><p>进入对应后台编辑地图、查看程序与积木记录。</p></div></header>
-      <section class="readiness-panel" aria-labelledby="readinessTitle">
-        <header>
-          <div><h3 id="readinessTitle">平台运行状态</h3><p id="readinessSummary">正在检查平台服务和部署配置…</p></div>
-          <button id="refreshReadiness" class="admin-button" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7"/></svg><span>重新检查</span>
-          </button>
-        </header>
-        <div id="readinessServices" class="readiness-services" aria-live="polite"></div>
-        <div id="readinessConfiguration" class="readiness-configuration"></div>
-      </section>
-      <div class="system-grid">
-        <article class="system-card blockly-card">
-          <span class="system-icon">积木</span><div><p class="system-kicker">赛题一 · 积木方式</p><h3>Blockly 积木与地图</h3><p>编辑比赛地图，查看用户提交的积木结构、生成代码和正式比赛记录。</p></div>
-          <a class="admin-button primary" href="/blockly/admin.html" target="_blank">进入管理</a>
-        </article>
-      </div>
+      <header class="panel-heading"><div><h2>比赛地图编辑</h2><p>拖动标记或修改坐标，保存后学员下一次运行会自动使用新版本。</p></div></header>
+      <iframe class="admin-map-editor-frame" src="/blockly/admin.html?maps=1" title="比赛地图编辑" loading="lazy"></iframe>
     </section>
   </main>
-  <script src="/platform-admin.js?v=20261009-real-score-judgment-001"></script>
+  <script src="/platform-admin.js?v=20261010-admin-maps-001"></script>
 </body>
 </html>

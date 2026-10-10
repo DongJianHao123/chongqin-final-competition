@@ -241,9 +241,7 @@ const missions = {
     goal: [2, 0],
     completion: { type: "auto", deliveryRadius: 0.95, goalRadius: 0.82 }
   },
-  guangyang1: createPrimaryGuangyangMission(1),
-  guangyang2: createPrimaryGuangyangMission(2),
-  guangyang3: createPrimaryGuangyangMission(3)
+  guangyang1: createPrimaryGuangyangMission(1)
 };
 
 const PRIMARY_GUANGYANG_BIN_SIZE = Object.freeze({ length: 1.2, width: 0.8, wallHeight: 0.25, wallThickness: 0.05, floorThickness: 0.1, floorBase: 0.05 });
@@ -272,7 +270,7 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
     mapRevision: Number.isInteger(publishedMap?.revision) ? publishedMap.revision : null,
     mapDigest: typeof publishedMap?.digest === "string" ? publishedMap.digest : null,
     title: `广阳岛综合任务${level}`,
-    text: `${targets.length} 个目标物、${distractors.length} 个混淆物${obstacles.length ? `、${obstacles.length} 个岩石障碍物` : ""}；${checkpoints.length ? `按顺序经过 ${checkpoints.length} 个途径点后` : ""}把目标物送入目标点、把混淆物放进白框，返回停车区。`,
+    text: `${targets.length} 个目标物、${distractors.length} 个混淆物${obstacles.length ? `、${obstacles.length} 个岩石障碍物` : ""}；${checkpoints.length ? `按顺序经过 ${checkpoints.length} 个途径点后` : ""}把目标物送入目标点、把混淆物放进白框。`,
     environment: "guangyang",
     mapStyle: "basic",
     mapSize: PRIMARY_GUANGYANG_MAP.width,
@@ -397,6 +395,7 @@ let realGripperState = null;
 let realStopPromise = null;
 let realStopPending = false;
 let activeRealCameraBaseUrl = null;
+let laneFollowUsesCamera = false;
 let realCameraGeneration = 0;
 let highlightedBlockId = null;
 let actionCount = 0;
@@ -682,6 +681,9 @@ const zoomOutBlocksButton = document.querySelector("#zoomOutBlocksButton");
 const deleteBlocksButton = document.querySelector("#deleteBlocksButton");
 const disableBlocksButton = document.querySelector("#disableBlocksButton");
 const runSelectedBlocksButton = document.querySelector("#runSelectedBlocksButton");
+const selectAllBlocksButton = document.querySelector("#selectAllBlocksButton");
+const copyBlocksButton = document.querySelector("#copyBlocksButton");
+const pasteBlocksButton = document.querySelector("#pasteBlocksButton");
 const sidePanel = document.querySelector(".side-panel");
 const stateSceneSplitter = document.querySelector("#stateSceneSplitter");
 const statusText = document.querySelector("#statusText");
@@ -1251,14 +1253,13 @@ function missionProgressSnapshot() {
     let hint = "完成全部任务目标";
     if (missionAttempt.failedObstacleIds.size) hint = `已碰撞 ${missionAttempt.failedObstacleIds.size} 个障碍物，本次无法获得对应避障分`;
     else if (progress.targetDeliveredCount < progress.targetTotal) hint = holdingTarget
-      ? "把红色目标物放入绿色存放点"
+      ? "把目标物橙子放入存放点"
       : "";
     else if (progress.distractorClearedCount < progress.distractorTotal) hint = holdingDistractor
-      ? "把混淆物放进白框"
-      : `还需把 ${progress.distractorTotal - progress.distractorClearedCount} 个混淆物放进白框`;
+      ? "把混淆物网球放进白框"
+      : `还需把 ${progress.distractorTotal - progress.distractorClearedCount} 个混淆物网球放进白框`;
     else if (progress.checkpointCount < progress.checkpointTotal) hint = `按顺序前往途径点 ${progress.checkpointCount + 1}`;
-    else if (!progress.goalReached) hint = "全部目标已完成，返回起点停车区";
-    else if (progress.finished) hint = "全部任务目标均已完成";
+    else hint = "全部任务目标均已完成";
     return {
       completed: progress.completed,
       total: progress.total,
@@ -1372,12 +1373,6 @@ function evaluateMissionProgress({ allowComplete = true, announce = true } = {})
       if (announce) addLog(`已通过导航点 ${missionAttempt.nextCheckpointIndex}/${missionAttempt.checkpointPoints.length}。`);
     }
     if (spec.type === "checkpoints" && missionAttempt.nextCheckpointIndex === missionAttempt.checkpointPoints.length) {
-      missionAttempt.goalReached ||= atGoal;
-    }
-    if (spec.type === "composite"
-      && missionAttempt.nextCheckpointIndex === missionAttempt.checkpointPoints.length
-      && missionAttempt.deliveredTargetIds.size === missionAttempt.targetPackageIds.size
-      && missionAttempt.deliveredDistractorIds.size === missionAttempt.distractorPackageIds.size) {
       missionAttempt.goalReached ||= atGoal;
     }
   }
@@ -2654,7 +2649,20 @@ function installMultiSelectHandlers() {
     const el = document.activeElement;
     const tag = el?.tagName?.toLowerCase?.();
     if (el && (el.isContentEditable || tag === "input" || tag === "textarea" || tag === "select")) return;
-    if (event.key === "Escape" && multiSelectedBlockIds.size > 1) {
+    const key = event.key?.toLowerCase?.();
+    if ((event.ctrlKey || event.metaKey) && key === "a") {
+      event.preventDefault();
+      event.stopPropagation();
+      selectAllBlocklyBlocks();
+    } else if ((event.ctrlKey || event.metaKey) && key === "c") {
+      event.preventDefault();
+      event.stopPropagation();
+      copyBlocklySelection();
+    } else if ((event.ctrlKey || event.metaKey) && key === "v") {
+      event.preventDefault();
+      event.stopPropagation();
+      void pasteBlocklySelection();
+    } else if (event.key === "Escape" && multiSelectedBlockIds.size > 1) {
       clearMultiSelection();
       event.preventDefault();
       event.stopPropagation();
@@ -3276,19 +3284,24 @@ function multiSelectableRoot(block) {
 
 function orderedTopLevelBlockIds() {
   if (!workspace) return [];
-  const roots = [];
+  const blocks = [];
+  // 沿 next 连接把一条语句链完整展开，确保主函数内外的积木链都被选中。
+  const collectChain = head => {
+    let current = head;
+    while (current) {
+      blocks.push(current);
+      current = current.getNextBlock?.() || null;
+    }
+  };
   workspace.getTopBlocks(false).forEach(block => {
     if (block.type === "robot_start") {
-      let inner = block.getInputTargetBlock?.("DO");
-      while (inner) {
-        roots.push(inner);
-        inner = inner.getNextBlock?.() || null;
-      }
+      collectChain(block.getInputTargetBlock?.("DO") || null);
+      collectChain(block.getNextBlock?.() || null);
     } else {
-      roots.push(block);
+      collectChain(block);
     }
   });
-  return roots
+  return blocks
     .sort((a, b) => {
       const aPos = a.getRelativeToSurfaceXY();
       const bPos = b.getRelativeToSurfaceXY();
@@ -3406,6 +3419,96 @@ function runSelectedBlocks() {
     playbackRate: debugPlaybackRate,
     selectedRootIds: roots.map(block => block.id)
   });
+}
+
+// —— 全选 / 复制 / 粘贴 ——
+let blocklyClipboardStates = [];
+const BLOCKLY_CLIPBOARD_PREFIX = "__CHENLONG_BLOCKLY_CLIPBOARD_V1__";
+
+function serializeClipboard(states) {
+  return BLOCKLY_CLIPBOARD_PREFIX + JSON.stringify(states);
+}
+
+function parseClipboard(text) {
+  if (typeof text !== "string" || text.indexOf(BLOCKLY_CLIPBOARD_PREFIX) !== 0) return null;
+  try {
+    const states = JSON.parse(text.slice(BLOCKLY_CLIPBOARD_PREFIX.length));
+    return Array.isArray(states) ? states : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function clipboardWriteSupported() {
+  return !!(typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function");
+}
+
+async function writeClipboardText(text) {
+  try {
+    if (!clipboardWriteSupported()) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function readClipboardText() {
+  try {
+    if (typeof navigator === "undefined" || !navigator.clipboard || typeof navigator.clipboard.readText !== "function") return null;
+    return await navigator.clipboard.readText();
+  } catch (_error) {
+    return null;
+  }
+}
+
+function selectAllBlocklyBlocks() {
+  if (!workspace) return;
+  const ids = orderedTopLevelBlockIds();
+  if (ids.length === 0) {
+    showToast("工作区暂无积木");
+    return;
+  }
+  setMultiSelection(ids, ids[ids.length - 1]);
+  showToast(`✓ 已全选 ${ids.length} 个积木`);
+}
+
+function copyBlocklySelection() {
+  if (!workspace) return;
+  const blocks = selectedBatchBlocks();
+  const roots = blocks
+    .map(block => multiSelectableRoot(block))
+    .filter((block, index, arr) => block && arr.indexOf(block) === index);
+  if (roots.length === 0) {
+    showToast("请先选中要复制的积木");
+    return;
+  }
+  const states = roots.map(block =>
+    Blockly.serialization.blocks.save(block, { addCoordinates: true })
+  );
+  blocklyClipboardStates = states;
+  void writeClipboardText(serializeClipboard(states)).then(ok => {
+    showToast(ok ? `✓ 已复制 ${roots.length} 个积木（可跨页面粘贴）` : `✓ 已复制 ${roots.length} 个积木`);
+  });
+}
+
+async function pasteBlocklySelection() {
+  if (!workspace) return;
+  const states = parseClipboard(await readClipboardText()) || blocklyClipboardStates;
+  if (!states || !states.length) {
+    showToast("剪贴板为空，请先复制积木");
+    return;
+  }
+  clearMultiSelection();
+  const step = 24;
+  states.forEach((state, index) => {
+    const clone = JSON.parse(JSON.stringify(state));
+    if (clone && typeof clone.x === "number") clone.x += index * step;
+    if (clone && typeof clone.y === "number") clone.y += index * step;
+    Blockly.serialization.blocks.append(clone, workspace, { recordUndo: true });
+  });
+  updateCode();
+  showToast(`✓ 已粘贴 ${states.length} 个积木`);
 }
 
 // —— 积木快照（保存 / 恢复）——
@@ -7785,7 +7888,7 @@ function stopRealCameraPreview({
 }
 
 function startRealCameraPreview() {
-  if (!cameraStream || targetSelect?.value !== "real") return;
+  if (!cameraStream || targetSelect?.value !== "real" || laneFollowUsesCamera) return;
   if (document.hidden) {
     setRealCameraState("idle", "页面在后台，摄像头预览已暂停");
     return;
@@ -8015,10 +8118,10 @@ function updateLaneFollowHud({ result, wheels }) {
   if (laneFollowError) laneFollowError.textContent = recognized ? String(Math.round(result.error)) : "--";
   if (laneFollowCenters) laneFollowCenters.textContent = String(result.centers.length);
   if (laneFollowCrossing) laneFollowCrossing.textContent = result.crossing
-    ? (result.intersection && result.intersection.kind === "fork" ? "分叉" : "横杆")
+    ? (result.intersection && result.intersection.kind === "fork" ? "分叉" : "交点")
     : "否";
-  if (laneFollowLeft) laneFollowLeft.textContent = String(wheels.left);
-  if (laneFollowRight) laneFollowRight.textContent = String(wheels.right);
+  if (laneFollowLeft) laneFollowLeft.textContent = Number.isFinite(wheels.left) ? String(wheels.left) : "--";
+  if (laneFollowRight) laneFollowRight.textContent = Number.isFinite(wheels.right) ? String(wheels.right) : "--";
   laneFollowHud.classList.toggle("is-lost", !recognized);
 }
 
@@ -8040,26 +8143,34 @@ function hideLaneFollowCanvas() {
 
 async function followLineToJunction(context, baseValue, kpValue, maxCorrectionValue) {
   await waitForRunCheckpoint(context);
+  if (laneFollowUsesCamera) throw new Error("已有循迹任务正在运行");
   const params = normalizeFollowLineParams(baseValue, kpValue, maxCorrectionValue);
   actionCount++;
   addLog(`真实小车：自动巡线（基础速度 ${params.base}%，KP ${params.kp}，最大修正 ${params.maxCorrection}%）。`);
   const baseUrl = context.robotBaseUrl || getValidatedRobotBaseUrl();
+  const resumePreview = Boolean(activeRealCameraBaseUrl);
+  laneFollowUsesCamera = true;
+  await stopRealCameraPreview({ sendClose: false, message: "自动巡线中，显示识别画面" });
   showLaneFollowCanvas();
-  const lane = BlocklyLaneFollow.start({
-    baseUrl,
-    canvas: laneFollowCanvas,
-    base: params.base,
-    kp: params.kp,
-    maxCorrection: params.maxCorrection,
-    signal: context.signal,
-    onState: state => {
-      if (state?.state === "running") setStatus("自动巡线中…");
-    },
-    onFrame: updateLaneFollowHud
-  });
+  let lane;
   try {
+    lane = BlocklyLaneFollow.start({
+      baseUrl,
+      canvas: laneFollowCanvas,
+      ...params,
+      signal: context.signal,
+      onState: state => {
+        if (state?.state === "running") setStatus(state.phase === "centering" ? "正在驶入路口中心…"
+          : state.phase === "waiting_for_camera" ? "画面暂时不可用，等待恢复…" : "自动巡线中…");
+        else if (state?.state === "stopping") setStatus("正在确认停车…");
+      },
+      onFrame: updateLaneFollowHud
+    });
     const result = await lane.run();
-    if (result.reachedJunction) {
+    if (result.reachedLineEnd) {
+      setStatus("沿线循迹已到线尾");
+      addLog("沿线循迹：线已结束，正常停车退出。");
+    } else if (result.reachedJunction) {
       setStatus("沿线循迹已到路口");
       addLog("沿线循迹：已到达路口并停车。");
     } else {
@@ -8067,8 +8178,12 @@ async function followLineToJunction(context, baseValue, kpValue, maxCorrectionVa
     }
     return result;
   } finally {
-    await lane.stop();
-    hideLaneFollowCanvas();
+    try { await lane?.stop(); }
+    finally {
+      hideLaneFollowCanvas();
+      laneFollowUsesCamera = false;
+      if (resumePreview) startRealCameraPreview();
+    }
   }
 }
 
@@ -8609,6 +8724,25 @@ async function runProgram(options = {}) {
 
 function setStatus(text) {
   statusText.textContent = text;
+}
+
+let blocklyToastEl = null;
+let blocklyToastTimer = null;
+
+function showToast(message) {
+  if (!blocklyToastEl) {
+    blocklyToastEl = document.createElement("div");
+    blocklyToastEl.className = "blockly-toast";
+    blocklyToastEl.setAttribute("role", "status");
+    blocklyToastEl.setAttribute("aria-live", "polite");
+    document.body.appendChild(blocklyToastEl);
+  }
+  blocklyToastEl.textContent = message;
+  blocklyToastEl.classList.add("is-visible");
+  if (blocklyToastTimer) clearTimeout(blocklyToastTimer);
+  blocklyToastTimer = setTimeout(() => {
+    blocklyToastEl.classList.remove("is-visible");
+  }, 1600);
 }
 
 function setRunTarget(target) {
@@ -9429,7 +9563,8 @@ function validatePublishedPrimaryMap(config) {
 
 async function refreshPublishedPrimaryMaps({ reloadCurrent = true } = {}) {
   const result = await primaryRequest("/api/maps");
-  if (result?.schemaVersion !== "chenlong.blockly-maps/v1" || !Array.isArray(result.maps) || result.maps.length !== 3) {
+  const expectedMapCount = Object.keys(PRIMARY_GUANGYANG_MAPS.TASKS).length;
+  if (result?.schemaVersion !== "chenlong.blockly-maps/v1" || !Array.isArray(result.maps) || result.maps.length !== expectedMapCount) {
     throw new Error("地图列表回执不完整，请刷新页面重试。 ");
   }
   let currentChanged = false;
@@ -9735,6 +9870,9 @@ zoomOutBlocksButton.addEventListener("click", () => zoomBlocklyWorkspace(-1));
 deleteBlocksButton.addEventListener("click", deleteBlocklySelection);
 disableBlocksButton?.addEventListener("click", toggleDisableSelectedBlocks);
 runSelectedBlocksButton?.addEventListener("click", runSelectedBlocks);
+selectAllBlocksButton?.addEventListener("click", selectAllBlocklyBlocks);
+copyBlocksButton?.addEventListener("click", copyBlocklySelection);
+pasteBlocksButton?.addEventListener("click", () => void pasteBlocklySelection());
 saveSnapshotButton?.addEventListener("click", () => {
   if (saveBlocklySnapshot()) flashSnapshotSaved();
 });

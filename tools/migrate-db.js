@@ -12,9 +12,7 @@ const { PlatformStore, sha256 } = require("../packages/platform-store");
 const primaryGuangyangMaps = require("../projects/blockly-page3/guangyang-map-config.js");
 
 const PRIMARY_TASKS = Object.freeze([
-  "GYI-PRIMARY-01",
-  "GYI-PRIMARY-02",
-  "GYI-PRIMARY-03"
+  "GYI-PRIMARY-01"
 ]);
 
 // 迁移自 car-python/.runtime/auth/auth-store.json，仅保留 admin 一条用户及其队伍。

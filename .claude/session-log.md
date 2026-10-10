@@ -88,3 +88,27 @@ Blockly 卡片撑满整行：portal.css 加 .mode-card:not([hidden]){grid-column
 
 ## 2026-10-10 09:44
 修复巡线(follow_line)在曲线「走到一半提前停在路口前」：根因是 driveBlocklyNavigationPath 的 max_distance 上限只按沿路里程算，未计入小车起点偏离中心线/从路口前12cm起步的横向偏差，导致 movedWorld 提前触顶而停在路口前。改为把 path[0] 到当前小车的初始偏移计入 maximumWorld；同样惠及 follow_road 与 take_exit。app.js 改 + index.html bump 缓存为 20261010-sim-follow-initial-offset-001。
+
+## 2026-10-10 10:44
+后台管理重构：去掉子系统管理与平台运行状态，系统管理tab直接改为地图编辑（iframe 嵌入 /blockly/admin.html?maps=1）；platform-admin.js 移除全部 readiness 代码，admin.css 增 iframe 样式，blockly admin.js 增 mapsOnly 模式 + admin.css 隐藏 chrome，两处 admin.html bump 缓存版本
+
+## 2026-10-10 11:34
+Blockly 增加全选/复制/粘贴：index.html 新增全选/复制/粘贴三个工具栏按钮（check-square/copy/clipboard-paste 图标，置于删除按钮前保持删除为末位分隔样式），app.js 新增 selectAllBlocklyBlocks/copyBlocklySelection/pasteBlocklySelection（用 Blockly.serialization.blocks.save/load + 自维护 blocklyClipboardStates 剪贴板，粘贴按 index 偏移 24px 防重叠）并接入 Ctrl+A/C/V 快捷键与点击事件；app.js 缓存 bump 到 blockly-selectall-copy-paste-001。node --check 通过。
+
+## 2026-10-10 11:37
+Blockly 全选/复制/粘贴成功提示改为弹出 toast：app.js 新增 showToast 浮层（顶部居中淡入、1.6s 后淡出，复用单例 DOM），三个成功分支由 setStatus 改为 showToast（✓ 前缀）；styles.css 新增 .blockly-toast 样式并 bump 缓存到 blockly-toast-001。node --check 通过。
+
+## 2026-10-10 11:44
+修复 Blockly 复制/粘贴无反应：根因是粘贴用了不存在的 Blockly.serialization.blocks.load（9.3.3 该模块只有 save/append），改为 append(state, workspace, {recordUndo:true})；同时把全选/复制/粘贴的失败提示也由状态栏 setStatus 改为 showToast 弹出，避免「没反应」误判。node --check 通过。
+
+## 2026-10-10 13:22
+Blockly 复制/粘贴支持跨浏览器（系统剪贴板）：app.js 新增 serializeClipboard/parseClipboard（带 __CHENLONG_BLOCKLY_CLIPBOARD_V1__ 前缀标识）+ writeClipboardText/readClipboardText（navigator.clipboard，带 try-catch 与可用性检测），复制时同时写内存与系统剪贴板（成功提示「可跨页面粘贴」），粘贴时优先读系统剪贴板、解析失败回退内存剪贴板；pasteBlocklySelection 改 async。app.js 缓存 bump 到 blockly-clipboard-cross-001。node --check 通过。
+
+## 2026-10-10 13:26
+Blockly 全选改为选中所有连贯积木集合（不分主函数内外）：重写 orderedTopLevelBlockIds，新增 collectChain 沿 next 连接完整展开语句链；非 robot_start 顶级块此前只取链头、漏掉 next 后续块，现与主函数 DO 槽链一致展开；robot_start 自身的 next 链也一并收集。app.js 缓存 bump 到 blockly-selectall-chain-001。node --check 通过。
+
+## 2026-10-10 13:33
+修复地图同步失败：任务一化后（PRIMARY_TASKS 只剩 1 个），前端/后台仍硬编码校验 maps.length!==3，导致返回 1 个地图时报「地图列表回执不完整」。app.js refreshPublishedPrimaryMaps 与 admin.js loadMaps 改为用 Object.keys(TASKS).length 动态期望数量。app.js/admin.js 缓存 bump 到 blockly-maps-count-fix-001。node --check 通过。
+
+## 2026-10-10 15:50
+移植优化后巡线 SDK（10 个 .mjs 模块 + lane-follow.js 适配器）到统一项目：server.js 增加 .mjs MIME 与 10 条 /lane/src/*.mjs 静态白名单；app.js 集成新巡线（laneFollowUsesCamera 互斥标志、startRealCameraPreview 守卫、followLineToJunction 重写含 reachedLineEnd/恢复预览、updateLaneFollowHud 交点文案+Number.isFinite 轮速）；index.html 缓存 bump 到 lane-sdk-001。node --check 全部通过。
