@@ -73,3 +73,39 @@ Blockly 后台地图编辑器新增物品外观配置：目标物/混淆物样�
 
 ## 2026-09-30 15:43
 修复后台地图数据与前台模拟器不一致：根因是磁盘 store(primary-blockly-store.json) 里任务一仍是旧布局(4途径点/1目标/1混淆/1障碍)，与代码新 TASKS(0途径点/1目标/2混淆/0障碍)不兼容，normalizeLayout 直接抛错。server.js 新增 createInitialMapConfig + reconcileMapConfigs，启动时对与当前 TASKS 不兼容的地图配置重新播种(从 defaultLayout 重建)。node --check 通过，需重启服务生效。
+
+## 2026-10-09 16:08
+白框/目标物/目标点允许放在道路外：guangyang-map-config.js 的 point/pointList/findVacantPoint 增加 requireRoad 参数，normalizeLayout 对 targets/storage/bins 传 false 跳过道路校验（仍保留地图范围+间距校验），admin.js 增点时对 targets/bins 允许离路
+
+## 2026-10-09 16:39
+白框改长方形白色实心+可调角度：bins 元素由 [x,z] 改为 [x,z,angle](度数0-360)，guangyang-map-config.js 新增 binPoint/binList 校验与角度归一化(向后兼容补0)，admin.js 白框字段加角度输入框、增点补角度，app.js createPrimaryGuangyangBin 改为白色实心底座+四壁(1.2×0.8×0.25)并按角度旋转、网球交付判定改长方形内判定(pointInsideBin)，bump 缓存版本 bin-rect-001
+
+## 2026-10-09 16:48
+白框封底+缩放倍数：app.js createPrimaryGuangyangBin 改用 floorThickness=0.1 封底并读 scale 缩放全部尺寸，pointInsideBin 判交付按 scale 缩放长宽；index.html/admin.html 缓存版本 bump 到 bin-scale-001。node --check 通过。
+
+## 2026-10-09 17:02
+白框防穿模：广阳岛立体装饰(树木/建筑等)改为不写深度 depthWrite=false，使白框、小车、物品不被遮挡；只动 app.js 渲染层，缓存 bump 到 bin-depth-001。node --check 通过。
+
+## 2026-10-09 17:06
+白框防穿模修正：树 depthWrite=false 单独不够(材质排序导致树后渲染盖白框)，给白框 floor/walls 加 renderOrder=10 强制排在装饰之后渲染。缓存 bump 到 bin-depth-002。
+
+## 2026-10-09 17:28
+模拟器适配自动靠近模型+自动巡线积木：app.js 新增 approachBlocklyVisionModel/visibleVisionModels（仅支持 tennis/orange，复用可见物检测）与 followBlocklyLine（复用道路网络，黄线=道路中心线，到路口停车），makeSimRobotApi 的 approach/followLine 改绑新实现；index.html 缓存 bump 到 sim-follow-approach-001。node --check 通过。
+
+## 2026-10-09 17:34
+模拟器巡线停在路口前12cm：followBlocklyLine 停止点由道路端点改为端点前 12cm（STOP_BEFORE_JUNCTION_CM=12，reserve 取 min(12, 剩余距离) 防止短路回退），与真实小车一致；index.html 缓存 bump 到 sim-follow-stop12-001。node --check 通过。
+
+## 2026-10-09 17:43
+已交付包裹不再被摄像头感知：visionWorldObjects 过滤掉已放进目标点(deliveredTargetPackageIds)的目标物和已放进白框(deliveredDistractorPackageIds)的混淆物，使其无法再被自动靠近/识别；index.html 缓存 bump 到 sim-vision-skip-delivered-001。node --check 通过。
+
+## 2026-10-09 17:54
+机械臂改黄色+积木间2s停顿：createRobot 的机械臂(arm)与夹爪(claw)材质统一改为 armMat(#facc15 黄)；highlightExecutionBlock 在 sim 模式每个积木高亮前 waitRunDuration(2000) 停顿便于观察。index.html 缓存 bump 到 sim-arm-yellow-gap-001。node --check 通过。
+
+## 2026-10-09 18:02
+模拟器巡线只在分叉路口停车：followBlocklyLine 停止判定由 roadIds.length>1 改为 >=3（语义化，道路网络无 2 路节点），路口前 12cm 停车逻辑不变；缓存 bump 到 sim-follow-junction-001。node --check 通过。
+
+## 2026-10-09 18:05
+模拟器积木间停顿由 2s 改为 1s：highlightExecutionBlock 的 waitRunDuration(2000) 改 1000；缓存 bump 到 sim-block-gap-1s-001。node --check 通过。
+
+## 2026-10-09 18:17
+自动巡线只在路口停：driveBlocklyNavigationPath 增加 ignoreCollisions 参数，followBlocklyLine 传 true 跳过包裹/岩石碰撞检测，仅沿黄线行驶到路口前 12cm/道路尽头停车；其余道路控制(follow_road/take_exit)仍保留碰撞。缓存 bump 到 sim-follow-nocollide-001。node --check 通过。

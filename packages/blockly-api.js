@@ -38,9 +38,9 @@ const EXECUTION_METHODS = Object.freeze([
 ]);
 const EXECUTION_METHOD_SET = new Set(EXECUTION_METHODS);
 const PRIMARY_TASKS = Object.freeze({
-  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1", checkpoints: 0, targets: 1, distractors: 2, obstacles: 0 }),
-  "GYI-PRIMARY-02": Object.freeze({ name: "广阳岛综合任务2", checkpoints: 6, targets: 2, distractors: 2, obstacles: 2 }),
-  "GYI-PRIMARY-03": Object.freeze({ name: "广阳岛综合任务3", checkpoints: 8, targets: 3, distractors: 3, obstacles: 3 })
+  "GYI-PRIMARY-01": Object.freeze({ name: "广阳岛综合任务1" }),
+  "GYI-PRIMARY-02": Object.freeze({ name: "广阳岛综合任务2" }),
+  "GYI-PRIMARY-03": Object.freeze({ name: "广阳岛综合任务3" })
 });
 const DEFAULT_PARTICIPANT_GROUP = "primary";
 const PARTICIPANT_GROUP_ALIASES = Object.freeze({
@@ -330,11 +330,11 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
     };
   }
 
-  function scoreRun({ completed, taskProgress, checkpointCount, blockedMoves, offRoadEpisodes, offRoadDurationMs, durationMs, task }) {
+  function scoreRun({ completed, taskProgress, checkpointCount, blockedMoves, offRoadEpisodes, offRoadDurationMs, durationMs, checkpointTotal }) {
     return primaryGuangyangScoring.scoreRun({
       completed,
       checkpointCount,
-      checkpointTotal: task.checkpoints,
+      checkpointTotal,
       taskCompleted: taskProgress.completed,
       taskTotal: taskProgress.total,
       collisionCount: blockedMoves,
@@ -814,10 +814,10 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
       if (!task || typeof body.completed !== "boolean"
         || !Number.isInteger(body.mapRevision) || body.mapRevision < minimumMapRevision
         || typeof body.mapDigest !== "string" || !/^[a-f0-9]{64}$/.test(body.mapDigest)
-        || !Number.isInteger(body.checkpointCount) || body.checkpointCount < 0 || body.checkpointCount > task.checkpoints
-        || !Number.isInteger(body.targetDeliveredCount) || body.targetDeliveredCount < 0 || body.targetDeliveredCount > task.targets
-        || !Number.isInteger(body.distractorClearedCount) || body.distractorClearedCount < 0 || body.distractorClearedCount > task.distractors
-        || !Number.isInteger(body.failedObstacleCount) || body.failedObstacleCount < 0 || body.failedObstacleCount > task.obstacles
+        || !Number.isInteger(body.checkpointCount) || body.checkpointCount < 0
+        || !Number.isInteger(body.targetDeliveredCount) || body.targetDeliveredCount < 0
+        || !Number.isInteger(body.distractorClearedCount) || body.distractorClearedCount < 0
+        || !Number.isInteger(body.failedObstacleCount) || body.failedObstacleCount < 0
         || body.failedObstacleCount > body.blockedMoves
         || typeof body.goalReached !== "boolean"
         || !Number.isInteger(body.blockedMoves) || body.blockedMoves < 0 || body.blockedMoves > 99
@@ -830,22 +830,33 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
         || !Number.isInteger(body.codeLineCount) || body.codeLineCount < 0 || body.codeLineCount > 100_000) {
         throw new HttpError(400, "INVALID_RECORD", "运行记录内容不正确。 ");
       }
+      const runMapVersion = mapVersion(body.taskId, body.mapRevision, body.mapDigest);
+      const layout = runMapVersion.layout;
+      const checkpointTotal = layout.checkpoints.length;
+      const targetTotal = layout.targets.length;
+      const distractorTotal = layout.distractors.length;
+      const obstacleTotal = layout.obstacles.length;
+      if (body.checkpointCount > checkpointTotal
+        || body.targetDeliveredCount > targetTotal
+        || body.distractorClearedCount > distractorTotal
+        || body.failedObstacleCount > obstacleTotal) {
+        throw new HttpError(400, "INVALID_RECORD", "运行记录的任务数量超出地图配置。 ");
+      }
       const taskProgress = primaryGuangyangScoring.compositeTaskProgress({
         checkpointCount: body.checkpointCount,
-        checkpointTotal: task.checkpoints,
+        checkpointTotal,
         targetDeliveredCount: body.targetDeliveredCount,
-        targetTotal: task.targets,
+        targetTotal,
         distractorClearedCount: body.distractorClearedCount,
-        distractorTotal: task.distractors,
+        distractorTotal,
         failedObstacleCount: body.failedObstacleCount,
-        obstacleTotal: task.obstacles,
+        obstacleTotal,
         goalReached: body.goalReached
       });
       if (body.completed !== taskProgress.finished) {
         throw new HttpError(400, "INVALID_RECORD", "运行记录的完成状态与任务证据不一致。 ");
       }
-      const runMapVersion = mapVersion(body.taskId, body.mapRevision, body.mapDigest);
-      const score = scoreRun({ ...body, task, taskProgress });
+      const score = scoreRun({ ...body, taskProgress, checkpointTotal });
       const record = {
         id: randomId("run"),
         ownerUserId: user.id,
@@ -854,7 +865,7 @@ function createBlocklyApi({ store, auth, publicOrigin = "" }) {
         target: "sim",
         completed: body.completed,
         checkpointCount: body.checkpointCount,
-        checkpointTotal: task.checkpoints,
+        checkpointTotal,
         taskCompleted: taskProgress.completed,
         taskTotal: taskProgress.total,
         targetDeliveredCount: taskProgress.targetDeliveredCount,

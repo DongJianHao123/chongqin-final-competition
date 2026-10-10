@@ -9,6 +9,13 @@
   const TEAM_SCORE_TASK_IDS = Object.freeze(["GYI-PRIMARY-01", "GYI-PRIMARY-02", "GYI-PRIMARY-03"]);
   const GROUP_LABELS = Object.freeze({ primary: "小学组", junior: "初中组", high: "高中组" });
   const PACKAGE_STYLE_LABELS = Object.freeze({ box: "纸箱", orange: "橙子", tennis: "网球" });
+  const QUANTITY_FIELDS = Object.freeze([
+    Object.freeze({ kind: "checkpoints", label: "途径点" }),
+    Object.freeze({ kind: "targets", label: "目标物" }),
+    Object.freeze({ kind: "distractors", label: "混淆物" }),
+    Object.freeze({ kind: "obstacles", label: "障碍物" }),
+    Object.freeze({ kind: "bins", label: "白框" })
+  ]);
   const CAPABILITY_USAGE_SCHEMA_VERSION = "chenlong.blockly-runtime-capability-usage/v1";
   const platformMode = new URLSearchParams(window.location.search).get("platform") === "1"
     || window.location.pathname.startsWith("/blockly/");
@@ -404,7 +411,8 @@
       ...config.layout.targets.map((point, index) => ({ kind: "targets", type: "target", index, label: `目标物 ${index + 1}`, point })),
       { kind: "storage", type: "storage", index: 0, label: "目标点", point: config.layout.storage },
       ...config.layout.distractors.map((point, index) => ({ kind: "distractors", type: "distractor", index, label: `混淆物 ${index + 1}`, point })),
-      ...config.layout.obstacles.map((point, index) => ({ kind: "obstacles", type: "obstacle", index, label: `障碍物 ${index + 1}`, point }))
+      ...config.layout.obstacles.map((point, index) => ({ kind: "obstacles", type: "obstacle", index, label: `障碍物 ${index + 1}`, point })),
+      ...config.layout.bins.map((point, index) => ({ kind: "bins", type: "bin", index, label: `白框 ${index + 1}`, point }))
     ];
   }
 
@@ -455,6 +463,33 @@
       });
       coordinates.append(input);
     });
+    if (entry.type === "bin") {
+      const angleInput = document.createElement("input");
+      angleInput.type = "number";
+      angleInput.step = "15";
+      angleInput.min = "0";
+      angleInput.max = "360";
+      angleInput.value = String(entry.point[2] ?? 0);
+      angleInput.setAttribute("aria-label", `${entry.label} 角度`);
+      angleInput.addEventListener("change", () => {
+        updateMapPoint(entry.kind, entry.index, 2, angleInput.value);
+        renderMapMarkers();
+      });
+      coordinates.append(angleInput);
+      const scaleRange = mapRules.BIN_SCALE_RANGE || { min: 0.5, max: 2 };
+      const scaleInput = document.createElement("input");
+      scaleInput.type = "number";
+      scaleInput.step = "0.1";
+      scaleInput.min = String(scaleRange.min);
+      scaleInput.max = String(scaleRange.max);
+      scaleInput.value = String(entry.point[3] ?? 1);
+      scaleInput.setAttribute("aria-label", `${entry.label} 缩放`);
+      scaleInput.addEventListener("change", () => {
+        updateMapPoint(entry.kind, entry.index, 3, scaleInput.value);
+        renderMapMarkers();
+      });
+      coordinates.append(scaleInput);
+    }
     label.append(title, coordinates);
     group.append(label);
   }
@@ -480,6 +515,59 @@
     group.append(wrapper);
   }
 
+  function addMapQuantityField(group, kind, label) {
+    const config = selectedMap();
+    const range = mapRules.QUANTITY_RANGES?.[kind];
+    if (!config || !range) return;
+    const wrapper = document.createElement("label");
+    const title = document.createElement("span");
+    title.textContent = label;
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "primary-admin-count-input";
+    input.step = "1";
+    input.min = String(range.min);
+    input.max = String(range.max);
+    input.value = String(config.layout[kind].length);
+    input.setAttribute("aria-label", `${label}数量`);
+    input.addEventListener("change", () => setMapQuantity(kind, label, input));
+    wrapper.append(title, input);
+    group.append(wrapper);
+  }
+
+  function setMapQuantity(kind, label, input) {
+    const config = selectedMap();
+    const range = mapRules.QUANTITY_RANGES?.[kind];
+    if (!config || !range) return;
+    const requested = Number(input.value);
+    if (!Number.isInteger(requested) || requested < range.min || requested > range.max) {
+      say(`${label}数量必须在 ${range.min}–${range.max} 之间。`, "error");
+      renderMapEditor();
+      return;
+    }
+    const current = config.layout[kind].length;
+    if (requested === current) return;
+    if (requested < current) {
+      config.layout[kind].splice(requested);
+      state.mapDirty = true;
+      renderMapEditor();
+      return;
+    }
+    for (let index = current; index < requested; index += 1) {
+      const point = mapRules.findVacantPoint(config.layout, kind !== "targets" && kind !== "bins");
+      if (!point) {
+        config.layout[kind].splice(current);
+        say(`${label}找不到足够空位，已回滚到 ${current} 个。`, "error");
+        state.mapDirty = true;
+        renderMapEditor();
+        return;
+      }
+      config.layout[kind].push(kind === "bins" ? [point[0], point[1], 0, 1] : point);
+    }
+    state.mapDirty = true;
+    renderMapEditor();
+  }
+
   function renderMapMarkers() {
     mapCanvas.replaceChildren();
     const config = selectedMap();
@@ -503,6 +591,12 @@
     renderMapMarkers();
     if (!config) return;
     document.querySelector("#adminMapRevision").textContent = `当前修订 ${config.revision} · 共 ${config.versionCount || 1} 个版本 · ${formatTime(config.updatedAt)}`;
+    const quantityFieldset = document.createElement("fieldset");
+    const quantityLegend = document.createElement("legend");
+    quantityLegend.textContent = "点数量";
+    quantityFieldset.append(quantityLegend);
+    QUANTITY_FIELDS.forEach(({ kind, label }) => addMapQuantityField(quantityFieldset, kind, label));
+    mapFields.append(quantityFieldset);
     const entries = markerEntries(config);
     [["途径点（按编号依次通过）", entries.filter(entry => entry.type === "checkpoint")], ["任务物品", entries.filter(entry => entry.type !== "checkpoint")]]
       .filter(([, groupEntries]) => groupEntries.length > 0)

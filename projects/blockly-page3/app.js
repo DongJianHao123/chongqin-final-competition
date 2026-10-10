@@ -246,6 +246,8 @@ const missions = {
   guangyang3: createPrimaryGuangyangMission(3)
 };
 
+const PRIMARY_GUANGYANG_BIN_SIZE = Object.freeze({ length: 1.2, width: 0.8, wallHeight: 0.25, wallThickness: 0.05, floorThickness: 0.1, floorBase: 0.05 });
+
 function createPrimaryGuangyangMission(level, publishedMap = null) {
   const taskId = `GYI-PRIMARY-0${level}`;
   const taskDefinition = PRIMARY_GUANGYANG_MAPS.TASKS[taskId] || PRIMARY_GUANGYANG_MAPS.TASKS["GYI-PRIMARY-01"];
@@ -258,6 +260,7 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
   const targets = task.targets.map(point => [...point]);
   const distractors = task.distractors.map(point => [...point]);
   const obstacles = task.obstacles.map(point => [...point]);
+  const bins = (task.bins || []).map(point => [...point]);
   const targetStyle = ["box", "orange", "tennis"].includes(task.targetStyle) ? task.targetStyle : "orange";
   const distractorStyle = ["box", "orange", "tennis"].includes(task.distractorStyle) ? task.distractorStyle : "tennis";
   const packages = [
@@ -269,14 +272,14 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
     mapRevision: Number.isInteger(publishedMap?.revision) ? publishedMap.revision : null,
     mapDigest: typeof publishedMap?.digest === "string" ? publishedMap.digest : null,
     title: `广阳岛综合任务${level}`,
-    text: `${targets.length} 个目标物、${distractors.length} 个混淆物${obstacles.length ? `、${obstacles.length} 个岩石障碍物` : ""}；${checkpoints.length ? `按顺序经过 ${checkpoints.length} 个途径点后` : ""}返回停车区。`,
+    text: `${targets.length} 个目标物、${distractors.length} 个混淆物${obstacles.length ? `、${obstacles.length} 个岩石障碍物` : ""}；${checkpoints.length ? `按顺序经过 ${checkpoints.length} 个途径点后` : ""}把目标物送入目标点、把混淆物放进白框，返回停车区。`,
     environment: "guangyang",
     mapStyle: "basic",
     mapSize: PRIMARY_GUANGYANG_MAP.width,
     start: [start[0], start[1], Math.PI],
     obstacles,
     packages,
-    landmarks: { targets, distractors, storage },
+    landmarks: { targets, distractors, storage, bins },
     checkpointLabels: [...task.checkpointLabels],
     goal: [...start],
     showGuidePath: false,
@@ -1142,8 +1145,7 @@ function initializeMissionAttempt() {
     targetPackageIds: new Set(packages.filter(record => record.role === "target").map(record => record.id)),
     distractorPackageIds: new Set(packages.filter(record => record.role === "distractor").map(record => record.id)),
     deliveredTargetIds: new Set(),
-    clearedDistractorIds: new Set(),
-    handledPackageIds: new Set(),
+    deliveredDistractorIds: new Set(),
     requiredObstacleIds: new Set((activeMission.obstacles || []).map((_, index) => `${activeMission.taskId || "mission"}-obstacle-${index + 1}`)),
     failedObstacleIds: new Set(),
     checkpointPoints: ["checkpoints", "composite"].includes(spec.type) ? getMissionCheckpointPositions(spec) : [],
@@ -1165,20 +1167,30 @@ function deliveredTargetPackageIds() {
   return delivered;
 }
 
-function clearedDistractorPackageIds() {
-  const cleared = new Set();
-  if (!missionAttempt) return cleared;
+function pointInsideBin(px, pz, bin) {
+  const [bx, bz, angleDeg = 0, scale = 1] = bin;
+  const s = Number(scale) || 1;
+  const angle = (Number(angleDeg) || 0) * Math.PI / 180;
+  const halfLength = PRIMARY_GUANGYANG_BIN_SIZE.length * s / 2;
+  const halfWidth = PRIMARY_GUANGYANG_BIN_SIZE.width * s / 2;
+  const dx = px - bx;
+  const dz = pz - bz;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const localX = dx * cos + dz * sin;
+  const localZ = -dx * sin + dz * cos;
+  return Math.abs(localX) <= halfLength && Math.abs(localZ) <= halfWidth;
+}
+
+function deliveredDistractorPackageIds() {
+  const delivered = new Set();
+  if (!missionAttempt || !Array.isArray(activeMission.landmarks?.bins) || !activeMission.landmarks.bins.length) return delivered;
   ensureMissionPackages().forEach(record => {
-    if (!missionAttempt.distractorPackageIds.has(record.id) || record.id === heldPackageId
-      || !missionAttempt.handledPackageIds.has(record.id)) return;
-    const clearance = PRIMARY_GUANGYANG_SCORING.roadEdgeClearance(
-      record.x,
-      record.z,
-      missionAttempt.spec.packageRadius
-    );
-    if (clearance + 1e-6 >= missionAttempt.spec.minimumRoadEdgeClearance) cleared.add(record.id);
+    if (!missionAttempt.distractorPackageIds.has(record.id) || record.id === heldPackageId) return;
+    const withinBin = activeMission.landmarks.bins.some(bin => pointInsideBin(record.x, record.z, bin));
+    if (withinBin) delivered.add(record.id);
   });
-  return cleared;
+  return delivered;
 }
 
 function compositeMissionProgress() {
@@ -1188,7 +1200,7 @@ function compositeMissionProgress() {
     checkpointTotal: missionAttempt.checkpointPoints.length,
     targetDeliveredCount: missionAttempt.deliveredTargetIds.size,
     targetTotal: missionAttempt.targetPackageIds.size,
-    distractorClearedCount: missionAttempt.clearedDistractorIds.size,
+    distractorClearedCount: missionAttempt.deliveredDistractorIds.size,
     distractorTotal: missionAttempt.distractorPackageIds.size,
     failedObstacleCount: missionAttempt.failedObstacleIds.size,
     obstacleTotal: missionAttempt.requiredObstacleIds.size,
@@ -1242,8 +1254,8 @@ function missionProgressSnapshot() {
       ? "把红色目标物放入绿色存放点"
       : "";
     else if (progress.distractorClearedCount < progress.distractorTotal) hint = holdingDistractor
-      ? "把蓝色混淆物完整移出道路，离道路边缘至少 2.5 厘米"
-      : `还需移走 ${progress.distractorTotal - progress.distractorClearedCount} 个蓝色混淆物`;
+      ? "把混淆物放进白框"
+      : `还需把 ${progress.distractorTotal - progress.distractorClearedCount} 个混淆物放进白框`;
     else if (progress.checkpointCount < progress.checkpointTotal) hint = `按顺序前往途径点 ${progress.checkpointCount + 1}`;
     else if (!progress.goalReached) hint = "全部目标已完成，返回起点停车区";
     else if (progress.finished) hint = "全部任务目标均已完成";
@@ -1346,7 +1358,7 @@ function evaluateMissionProgress({ allowComplete = true, announce = true } = {})
   }
   if (spec.type === "composite") {
     missionAttempt.deliveredTargetIds = deliveredTargetPackageIds();
-    missionAttempt.clearedDistractorIds = clearedDistractorPackageIds();
+    missionAttempt.deliveredDistractorIds = deliveredDistractorPackageIds();
   }
   const atGoal = Boolean(activeMission.goal)
     && Math.hypot(robotPose.x - activeMission.goal[0], robotPose.z - activeMission.goal[1]) <= spec.goalRadius;
@@ -1365,7 +1377,7 @@ function evaluateMissionProgress({ allowComplete = true, announce = true } = {})
     if (spec.type === "composite"
       && missionAttempt.nextCheckpointIndex === missionAttempt.checkpointPoints.length
       && missionAttempt.deliveredTargetIds.size === missionAttempt.targetPackageIds.size
-      && missionAttempt.clearedDistractorIds.size === missionAttempt.distractorPackageIds.size) {
+      && missionAttempt.deliveredDistractorIds.size === missionAttempt.distractorPackageIds.size) {
       missionAttempt.goalReached ||= atGoal;
     }
   }
@@ -3183,6 +3195,8 @@ function flushSimulationPlayback(context) {
 
 async function highlightExecutionBlock(blockId, context) {
   await flushSimulationPlayback(context);
+  // 每个积木执行完后、高亮下一个积木前，停顿 1 秒便于观察（仅模拟器）。
+  if (context.target === "sim") await waitRunDuration(1000, context);
   await waitForRunCheckpoint(context);
   throwIfRunCancelled(context);
   context.checkpointCount += 1;
@@ -4145,7 +4159,7 @@ function createRobot() {
   const edgeMat = new THREE.MeshStandardMaterial({ color: "#d1d5db", metalness: 0.65, roughness: 0.24 });
   const blueMat = new THREE.MeshStandardMaterial({ color: "#1d4ed8", metalness: 0.35, roughness: 0.34 });
   const tireMat = new THREE.MeshStandardMaterial({ color: "#050505", roughness: 0.72 });
-  const accentMat = new THREE.MeshStandardMaterial({ color: "#f97316", metalness: 0.2, roughness: 0.4 });
+  const armMat = new THREE.MeshStandardMaterial({ color: "#facc15", metalness: 0.35, roughness: 0.34 });
   const lightMat = new THREE.MeshStandardMaterial({ color: "#fff7ad", emissive: "#fff1a6", emissiveIntensity: 1.2 });
 
   const lowerPlate = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.08, 0.66), plateMat);
@@ -4185,54 +4199,54 @@ function createRobot() {
   });
 
   const arm = new THREE.Group();
-  const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.1, 24), matteBlack);
+  const shoulder = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.15, 0.1, 24), armMat);
   shoulder.position.y = 0.47;
   arm.add(shoulder);
 
-  const shoulderCap = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.08, 20), edgeMat);
+  const shoulderCap = new THREE.Mesh(new THREE.CylinderGeometry(0.095, 0.095, 0.08, 20), armMat);
   shoulderCap.rotation.x = Math.PI / 2;
   shoulderCap.position.set(0, 0.56, -0.06);
   arm.add(shoulderCap);
 
-  const upperLink = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.58, 0.13), matteBlack);
+  const upperLink = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.58, 0.13), armMat);
   upperLink.position.set(0, 0.78, -0.14);
   upperLink.rotation.x = -0.56;
   arm.add(upperLink);
 
-  const elbow = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.18, 20), edgeMat);
+  const elbow = new THREE.Mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.18, 20), armMat);
   elbow.rotation.z = Math.PI / 2;
   elbow.position.set(0, 1.02, -0.34);
   arm.add(elbow);
 
-  const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.43, 0.12), matteBlack);
+  const forearm = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.43, 0.12), armMat);
   forearm.position.set(0, 1.02, -0.56);
   forearm.rotation.x = -1.1;
   arm.add(forearm);
 
-  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 16), edgeMat);
+  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.18, 16), armMat);
   wrist.rotation.z = Math.PI / 2;
   wrist.position.set(0, 0.87, -0.77);
   arm.add(wrist);
 
-  const wristConnector = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.095, 0.16), matteBlack);
+  const wristConnector = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.095, 0.16), armMat);
   wristConnector.position.set(0, 0.88, -0.84);
   arm.add(wristConnector);
 
   const claw = new THREE.Group();
-  const toolStem = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.06, 0.04), matteBlack);
+  const toolStem = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.06, 0.04), armMat);
   toolStem.position.set(0, 0, 0.055);
   claw.add(toolStem);
-  const mount = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.11, 0.12), accentMat);
+  const mount = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.11, 0.12), armMat);
   mount.position.set(0, 0, -0.005);
   claw.add(mount);
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.075, 0.045), accentMat);
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.075, 0.045), armMat);
   palm.position.set(0, 0, -0.075);
   claw.add(palm);
   [-0.06, 0.06].forEach(x => {
-    const fingerBase = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.07, 0.055), accentMat);
+    const fingerBase = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.07, 0.055), armMat);
     fingerBase.position.set(x, 0, -0.12);
     claw.add(fingerBase);
-    const fingerTip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.045, 0.1), accentMat);
+    const fingerTip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.045, 0.1), armMat);
     fingerTip.position.set(x + (x < 0 ? -0.012 : 0.012), 0, -0.185);
     fingerTip.rotation.y = x < 0 ? -0.14 : 0.14;
     claw.add(fingerTip);
@@ -4940,6 +4954,8 @@ function buildPrimaryGuangyangRelief(sourceCanvas = null) {
     if (!node.isMesh) return;
     node.castShadow = false;
     node.receiveShadow = true;
+    // 立体装饰（树木/建筑等）不写深度，避免把放在其上的白框、小车或物品遮挡隐藏。
+    if (node.material) node.material.depthWrite = false;
   });
   primaryGuangyangReliefRoot = addMissionDecoration(root, null, false);
   primaryGuangyangReliefRoot.visible = cameraMode !== "top";
@@ -4990,10 +5006,49 @@ function createPrimaryGuangyangStorage(position) {
   missionDecorationMeshes.push(text);
 }
 
+function createPrimaryGuangyangBin(position, index) {
+  if (!Array.isArray(position)) return;
+  const [x, z, angleDeg = 0, scale = 1] = position;
+  const { length, width, wallHeight, wallThickness, floorThickness, floorBase } = PRIMARY_GUANGYANG_BIN_SIZE;
+  const s = Number(scale) || 1;
+  const L = length * s;
+  const W = width * s;
+  const H = wallHeight * s;
+  const T = wallThickness * s;
+  const FT = floorThickness * s;
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.58, metalness: 0.04 });
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(L, FT, W), material);
+  floor.position.y = floorBase + FT / 2;
+  floor.receiveShadow = true;
+  group.add(floor);
+  const wallY = floorBase + FT + H / 2;
+  const wallSpecs = [
+    { position: [0, wallY, W / 2 - T / 2], size: [L, H, T] },
+    { position: [0, wallY, -W / 2 + T / 2], size: [L, H, T] },
+    { position: [-L / 2 + T / 2, wallY, 0], size: [T, H, W] },
+    { position: [L / 2 - T / 2, wallY, 0], size: [T, H, W] }
+  ];
+  wallSpecs.forEach(({ position: [wx, wy, wz], size: [wl, wh, ww] }) => {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(wl, wh, ww), material);
+    wall.position.set(wx, wy, wz);
+    group.add(wall);
+  });
+  // 白框排在立体装饰之后渲染，配合装饰 depthWrite=false，避免被树木/建筑穿透遮挡。
+  group.traverse(node => { if (node.isMesh) node.renderOrder = 10; });
+  group.position.set(x, 0, z);
+  group.rotation.y = (angleDeg * Math.PI) / 180;
+  addMissionDecoration(group, null, false);
+  const text = createTextLabel(`白框${index + 1}`, x, z, 0.52);
+  text.scale.set(0.84, 0.3, 1);
+  missionDecorationMeshes.push(text);
+}
+
 function buildPrimaryGuangyangTaskObjects() {
   const landmarks = activeMission.landmarks || {};
   // 目标物和混淆物由可抓取的任务包裹模型呈现，避免再叠加一套装饰模型。
   createPrimaryGuangyangStorage(landmarks.storage);
+  (landmarks.bins || []).forEach((bin, index) => createPrimaryGuangyangBin(bin, index));
 }
 
 function buildGuangyangEnvironment(buildGeneration) {
@@ -5738,6 +5793,7 @@ function createPackageModel(record, stackLevel, index) {
   group.userData.kind = "package";
   group.userData.packageId = record.id;
   group.userData.packageRole = record.role || null;
+  group.userData.packageStyle = record.style || null;
   group.userData.stackLevel = stackLevel;
   group.userData.stackKey = packageStackKey(record.x, record.z);
   group.userData.packageIndex = index;
@@ -6270,7 +6326,6 @@ function attachPackageToRobot() {
   packageMesh.scale.set(0.78 / Math.max(0.1, robotClaw.scale.x), 0.78, 0.78);
   heldPackageId = packageMesh.userData.packageId;
   heldPackageMesh = packageMesh;
-  missionAttempt?.handledPackageIds?.add(heldPackageId);
   rebuildRobotCollisionShapes();
   markSceneShadowDirty();
   return true;
@@ -6769,6 +6824,7 @@ function readBlocklyMission(context) {
     mapVersion: `${activeMission.mapRevision || 0}:${activeMission.mapDigest || "unpublished"}`,
     start: missionAnchor(network, "start", baseline.start),
     storage: missionAnchor(network, "storage", baseline.landmarks?.storage),
+    bins: (baseline.landmarks?.bins || []).map((point, index) => missionAnchor(network, `bin-${index + 1}`, point)),
     checkpoints: checkpointPoints.map((point, index) => missionAnchor(
       network,
       baseline.checkpointLabels?.[index] || `checkpoint-${index + 1}`,
@@ -6835,13 +6891,8 @@ function readBlocklyReleasePreview(context) {
       drop[0] - activeMission.landmarks.storage[0],
       drop[1] - activeMission.landmarks.storage[1]
     ) <= missionAttempt.spec.deliveryRadius + PHYSICS_EPSILON;
-  } else if (role === "distractor") {
-    const clearanceWorld = PRIMARY_GUANGYANG_SCORING.roadEdgeClearance(
-      drop[0], drop[1], missionAttempt.spec.packageRadius
-    );
-    roadClearanceCm = roundNavigationValue(primaryWorldUnitsToCm(clearanceWorld));
-    requiredRoadClearanceCm = roundNavigationValue(primaryWorldUnitsToCm(missionAttempt.spec.minimumRoadEdgeClearance));
-    wouldCompleteDelivery = clearanceWorld + PHYSICS_EPSILON >= missionAttempt.spec.minimumRoadEdgeClearance;
+  } else if (role === "distractor" && Array.isArray(activeMission.landmarks?.bins)) {
+    wouldCompleteDelivery = activeMission.landmarks.bins.some(bin => pointInsideBin(drop[0], drop[1], bin));
   }
   return {
     schemaVersion: "chenlong.blockly-release-preview/v1",
@@ -6916,15 +6967,22 @@ function normalizeVisionTarget(value, { allowAll = false } = {}) {
 
 function visionWorldObjects() {
   const objects = [];
+  const deliveredTargets = deliveredTargetPackageIds();
+  const deliveredDistractors = deliveredDistractorPackageIds();
   packageMeshes.forEach((mesh, index) => {
     if (mesh === heldPackageMesh) return;
     const role = mesh.userData.packageRole;
     const categoryLabel = role === "target" ? "目标物" : role === "distractor" ? "混淆物" : null;
     if (!categoryLabel) return;
+    const packageId = mesh.userData.packageId || `${categoryLabel}-${index + 1}`;
+    // 已放进目标点/白框的包裹不再被摄像头感知，无法再被自动靠近或识别。
+    if (role === "target" && deliveredTargets.has(packageId)) return;
+    if (role === "distractor" && deliveredDistractors.has(packageId)) return;
     objects.push({
-      key: mesh.userData.packageId || `${categoryLabel}-${index + 1}`,
+      key: packageId,
       categoryLabel,
       name: `${categoryLabel}${index + 1}`,
+      style: mesh.userData.packageStyle || null,
       x: mesh.position.x,
       z: mesh.position.z
     });
@@ -7079,6 +7137,70 @@ async function approachBlocklyVisionTarget(context, targetValue, distanceValue =
   return false;
 }
 
+const PRIMARY_APPROACH_MODELS = Object.freeze(["tennis", "orange"]);
+
+function visibleVisionModels(model, minimumConfidence) {
+  const style = String(model ?? "").trim();
+  if (!style) return [];
+  return visibleVisionObjects("全部", minimumConfidence)
+    .filter(item => item.object.style === style);
+}
+
+async function approachBlocklyVisionModel(context, modelValue, speedValue = 30, turnSpeedValue = 30, boxWidthValue = 320) {
+  requireGuangyangSimulation(context, "自动靠近");
+  recordExecutedRobotMethod(context, "approach");
+  actionCount += 1;
+  const model = String(modelValue ?? "").trim();
+  if (!PRIMARY_APPROACH_MODELS.includes(model)) {
+    throw new Error(`自动靠近模型只支持 ${PRIMARY_APPROACH_MODELS.join(" 或 ")}`);
+  }
+  const speed = Number(speedValue);
+  const turnSpeed = Number(turnSpeedValue);
+  const boxWidth = Number(boxWidthValue);
+  if (!Number.isFinite(speed) || speed < 1 || speed > 100) {
+    throw new Error("自动靠近直行速度必须是 1 到 100");
+  }
+  if (!Number.isFinite(turnSpeed) || turnSpeed < 1 || turnSpeed > 100) {
+    throw new Error("自动靠近转弯速度必须是 1 到 100");
+  }
+  if (!Number.isFinite(boxWidth) || boxWidth < 1 || boxWidth > 2000) {
+    throw new Error("自动靠近目标框宽必须是 1 到 2000 像素");
+  }
+  const stopDistanceCm = Math.max(5, Math.min(40, Math.round(6400 / boxWidth)));
+  const maxStepCm = Math.max(1, Math.min(25, Math.round(speed * 0.25)));
+  const maxTurnDeg = Math.max(2, Math.min(25, Math.round(turnSpeed * 0.25)));
+  context.visionQueryCount += 1;
+  if (context.visionQueryCount > 1000) throw new Error("摄像头查询超过每次运行 1000 次的上限");
+  addLog(`自动靠近模型“${model}”（直行速度 ${speed}，转弯速度 ${turnSpeed}，目标框宽 ${boxWidth}）。`);
+  const maxSteps = 100;
+  for (let step = 0; step < maxSteps; step += 1) {
+    await waitForRunCheckpoint(context);
+    const observed = visibleVisionModels(model, 0.45)[0];
+    if (!observed) {
+      addLog(`自动靠近已停止：摄像头没有可靠识别到“${model}”模型。`);
+      return false;
+    }
+    if (observed.distanceCm <= stopDistanceCm && observed.centered) {
+      addLog(`自动靠近完成：${model}约 ${observed.distanceCm} cm。`);
+      return true;
+    }
+    if (!observed.centered) {
+      const turnDegrees = Math.max(2, Math.min(maxTurnDeg, Math.abs(observed.angleDeg)));
+      await turnRobotAngle(observed.angleDeg > 0 ? "left" : "right", turnDegrees, context);
+      continue;
+    }
+    const stepCm = Math.max(0.1, Math.min(maxStepCm, observed.distanceCm - stopDistanceCm));
+    const frontClearanceCm = primaryWorldUnitsToCm(frontDistance());
+    if (frontClearanceCm < stepCm + 2) {
+      addLog(`自动靠近已停止：前方净空只有 ${Math.round(frontClearanceCm)} cm。`);
+      return false;
+    }
+    await moveRobotCentimeters(1, stepCm, context);
+  }
+  addLog(`自动靠近已停止：在 ${maxSteps} 步内没有到达“${model}”。`);
+  return false;
+}
+
 function normalizeRoadControlSpeed(value) {
   const speed = Number(value);
   if (!Number.isFinite(speed) || speed < 10 || speed > 100) throw new Error("道路控制速度必须是 10 到 100");
@@ -7167,8 +7289,16 @@ async function animateBlocklyRoadSegment(context, moveX, moveZ, distanceWorld) {
   markSceneShadowDirty();
 }
 
-async function driveBlocklyNavigationPath(context, path, speed, maximumCm = Infinity) {
-  const maximumWorld = Number.isFinite(maximumCm) ? primaryCmToWorldUnits(Math.max(0, maximumCm)) : Infinity;
+async function driveBlocklyNavigationPath(context, path, speed, maximumCm = Infinity, ignoreCollisions = false) {
+  // maximumCm 指沿道路中心线的里程；若小车起点偏离中心线（或从路口前 12cm 起步），
+  // 先修正这段横向/起步偏差会额外消耗里程。把它计入上限，避免提前触发 max_distance
+  // 而「走到一半就停在路口之前」。
+  const initialOffsetWorld = path.length
+    ? Math.hypot(path[0][0] - robotPose.x, path[0][1] - robotPose.z)
+    : 0;
+  const maximumWorld = Number.isFinite(maximumCm)
+    ? primaryCmToWorldUnits(Math.max(0, maximumCm)) + initialOffsetWorld
+    : Infinity;
   let movedWorld = 0;
   let elapsedTicks = 0;
   let waypointIndex = 0;
@@ -7209,26 +7339,29 @@ async function driveBlocklyNavigationPath(context, path, speed, maximumCm = Infi
     );
     const moveX = dx / remaining;
     const moveZ = dz / remaining;
-    const clearanceInfo = robotClearanceInfoAlongRay(robotPose.x, robotPose.z, moveX, moveZ);
-    const available = Math.max(0, clearanceInfo.distance - MOVE_COLLISION_SKIN);
-    if (available < stepWorld - PHYSICS_EPSILON) {
-      if (available > PHYSICS_EPSILON) {
-        await animateBlocklyRoadSegment(context, moveX, moveZ, available);
-        movedWorld += available;
-        addTrajectoryPoint(robotPose.x, robotPose.z);
+    // 巡线（follow_line）只沿黄线行驶，不把包裹/岩石当障碍；其余道路控制仍做碰撞检测。
+    if (!ignoreCollisions) {
+      const clearanceInfo = robotClearanceInfoAlongRay(robotPose.x, robotPose.z, moveX, moveZ);
+      const available = Math.max(0, clearanceInfo.distance - MOVE_COLLISION_SKIN);
+      if (available < stepWorld - PHYSICS_EPSILON) {
+        if (available > PHYSICS_EPSILON) {
+          await animateBlocklyRoadSegment(context, moveX, moveZ, available);
+          movedWorld += available;
+          addTrajectoryPoint(robotPose.x, robotPose.z);
+        }
+        primaryBlockedMoveCount += 1;
+        const obstacleId = clearanceInfo.shape?.kind === "obstacle" ? clearanceInfo.shape.obstacleId : null;
+        const newlyFailedObstacle = Boolean(obstacleId && missionAttempt?.failedObstacleIds
+          && !missionAttempt.failedObstacleIds.has(obstacleId));
+        if (obstacleId) {
+          missionAttempt?.failedObstacleIds?.add(obstacleId);
+        }
+        recordPrimaryCollisionPenalty(clearanceInfo, { newlyFailedObstacle });
+        lastMoveBlocked = true;
+        syncRobot(undefined, { forceTelemetry: true });
+        evaluateMissionProgress({ allowComplete: false, announce: false });
+        return { movedWorld, elapsedTicks: elapsedTicks + 1, stoppedBy: "collision" };
       }
-      primaryBlockedMoveCount += 1;
-      const obstacleId = clearanceInfo.shape?.kind === "obstacle" ? clearanceInfo.shape.obstacleId : null;
-      const newlyFailedObstacle = Boolean(obstacleId && missionAttempt?.failedObstacleIds
-        && !missionAttempt.failedObstacleIds.has(obstacleId));
-      if (obstacleId) {
-        missionAttempt?.failedObstacleIds?.add(obstacleId);
-      }
-      recordPrimaryCollisionPenalty(clearanceInfo, { newlyFailedObstacle });
-      lastMoveBlocked = true;
-      syncRobot(undefined, { forceTelemetry: true });
-      evaluateMissionProgress({ allowComplete: false, announce: false });
-      return { movedWorld, elapsedTicks: elapsedTicks + 1, stoppedBy: "collision" };
     }
     await animateBlocklyRoadSegment(context, moveX, moveZ, stepWorld);
     movedWorld += stepWorld;
@@ -7280,6 +7413,56 @@ async function followBlocklyRoad(context, maxCmValue = 100, speedValue = 40, obe
   return finishRoadControl(context, true, stoppedBy, state.roadId, driven.movedWorld, driven.elapsedTicks);
 }
 
+async function followBlocklyLine(context, baseValue, kpValue, maxCorrectionValue) {
+  beginRoadControl(context, "follow_line");
+  const params = normalizeFollowLineParams(baseValue, kpValue, maxCorrectionValue);
+  actionCount += 1;
+  addLog(`自动巡线：沿地面黄线行驶，基础速度 ${params.base}%，遇到路口前停车。`);
+  const network = getPrimaryNavigationNetwork();
+  const state = network.roadState(robotPose, primaryWorldUnitsToCm(frontDistance()));
+  if (!state.onRoad || !state.roadId) {
+    setStatus("不在黄线上");
+    addLog("自动巡线停止：小车当前没有压在黄线上。");
+    return finishRoadControl(context, false, "off_line", null, 0, 0);
+  }
+  const projection = network.project(robotPose.x, robotPose.z, state.roadId);
+  const forward = directionVector();
+  const record = network.road(state.roadId);
+  const naturalDirection = projection.tangentX * forward.x + projection.tangentZ * forward.z >= 0 ? 1 : -1;
+  if (record.oneWay && naturalDirection < 0) {
+    setStatus("逆行走黄线");
+    addLog("自动巡线停止：当前道路为单行道，方向相反。");
+    return finishRoadControl(context, false, "wrong_way", state.roadId, 0, 0);
+  }
+  const nodeId = naturalDirection > 0 ? record.toNodeId : record.fromNodeId;
+  const node = network.node(nodeId);
+  // 只在分叉路口（3 条及以上道路交汇）前停车；道路尽头（单条道路端点）则停到尽头前。
+  const stoppedBy = node.roadIds.length >= 3 ? "junction" : "road_end";
+  // 与真实小车一致：巡线在分叉路口（道路端点）前 12cm 停下，不压上路口节点。
+  const STOP_BEFORE_JUNCTION_CM = 12;
+  const endpointProgress = naturalDirection > 0 ? record.lengthCm : 0;
+  const remainingToEndCm = Math.abs(endpointProgress - projection.progressCm);
+  const reserveCm = Math.min(STOP_BEFORE_JUNCTION_CM, remainingToEndCm);
+  const stopProgress = endpointProgress - naturalDirection * reserveCm;
+  const requestedDistanceCm = Math.abs(stopProgress - projection.progressCm);
+  if (requestedDistanceCm <= 0.1) {
+    setStatus(stoppedBy === "junction" ? "沿线循迹已到路口" : "沿线循迹结束");
+    addLog("自动巡线完成：已到达路口前并停车。");
+    return finishRoadControl(context, true, stoppedBy, state.roadId, 0, 0);
+  }
+  const speed = Math.round(Math.max(10, Math.min(100, params.base)));
+  const path = network.pathAlong(state.roadId, projection.progressCm, stopProgress);
+  const driven = await driveBlocklyNavigationPath(context, path, speed, requestedDistanceCm, true);
+  const finalStoppedBy = driven.stoppedBy || stoppedBy;
+  if (finalStoppedBy === "junction") {
+    setStatus("沿线循迹已到路口");
+    addLog("自动巡线完成：已到达路口前并停车。");
+  } else {
+    setStatus("沿线循迹结束");
+  }
+  return finishRoadControl(context, true, finalStoppedBy, state.roadId, driven.movedWorld, driven.elapsedTicks);
+}
+
 async function takeBlocklyExit(context, roadIdValue, speedValue = 30, obeySpeedLimitValue = false) {
   beginRoadControl(context, "take_exit");
   const roadId = String(roadIdValue ?? "").trim();
@@ -7318,9 +7501,7 @@ function makeSimRobotApi(context) {
     backwardSeconds: seconds => moveRobot(-1, seconds, context),
     turn: (dir, seconds) => turnRobot(dir, seconds, context),
     turnAngle: (dir, degrees) => turnRobotAngle(dir, degrees, context),
-    followLine: () => {
-      throw new Error("沿线循迹只在真实小车模式可用，请切换到真实小车");
-    },
+    followLine: (base, kp, maxCorrection) => followBlocklyLine(context, base, kp, maxCorrection),
     wait: async seconds => {
       blockedMoveCount = 0;
       lastMoveBlocked = false;
@@ -7401,7 +7582,7 @@ function makeSimRobotApi(context) {
     direction: (target, confidence) => queryBlocklyVision(context, "direction", target, confidence),
     distance_to: (target, confidence) => queryBlocklyVision(context, "distance_to", target, confidence),
     observe: (target, confidence) => queryBlocklyVision(context, "observe", target, confidence),
-    approach: (target, distanceCm, maxSteps) => approachBlocklyVisionTarget(context, target, distanceCm, maxSteps),
+    approach: (model, speed, turnSpeed, boxWidth) => approachBlocklyVisionModel(context, model, speed, turnSpeed, boxWidth),
     stopped: () => !runContextIsCurrent(context),
     loopTick: async (name, index, total) => {
       logLoopIteration(context, name, index, total);

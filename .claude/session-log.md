@@ -76,3 +76,15 @@ Blockly 卡片撑满整行：portal.css 加 .mode-card:not([hidden]){grid-column
 
 ## 2026-10-09 12:12
 真实小车「小车状态」面板改为显示有意义的连接/地址/夹爪状态：app.js 新增 realGripperState 跟踪夹爪指令，updateRobotState 真实分支把位置/朝向/夹爪/前方改标为 连接/地址/夹爪/前方（连接=需重发停止/正常、地址=IP、夹爪=抓着/松开/未操作、前方=无距离传感器），index.html 给四个 label 加 id 并 bump app.js 缓存版本
+
+## 2026-10-09 15:12
+后台地图编辑支持调整点数量：guangyang-map-config.js 加 QUANTITY_RANGES/findVacantPoint、移除 TASKS 固定数量；blockly-api.js 记录提交流程改从 runMapVersion.layout 派生 checkpointTotal/targetTotal 等；admin.js/admin.html 增点数量控件（增点自动找空位、减点截断）并 bump 缓存版本
+
+## 2026-10-09 15:37
+后台地图编辑新增「白框」容器：guangyang-map-config.js 加 bins 字段(0-6)、app.js 网球(混淆物)改为放进白框交付逻辑并新增白框 3D 渲染、admin.js/admin.html 增白框数量控件+标记+图例，bump 缓存版本
+
+## 2026-10-09 16:26
+修复后台保存地图报「地图配置字段不正确」：根因是后端服务进程(12:02 启动)早于白框功能，内存里 guangyang-map-config.js 旧版 allowedKeys 无 bins 字段；重启服务加载新代码后恢复正常，测试保存离路坐标成功并已回滚恢复原地图
+
+## 2026-10-10 09:44
+修复巡线(follow_line)在曲线「走到一半提前停在路口前」：根因是 driveBlocklyNavigationPath 的 max_distance 上限只按沿路里程算，未计入小车起点偏离中心线/从路口前12cm起步的横向偏差，导致 movedWorld 提前触顶而停在路口前。改为把 path[0] 到当前小车的初始偏移计入 maximumWorld；同样惠及 follow_road 与 take_exit。app.js 改 + index.html bump 缓存为 20261010-sim-follow-initial-offset-001。

@@ -2680,6 +2680,7 @@ h1 {
 .primary-admin-map-marker[data-kind="storage"] { background: #22c55e; }
 .primary-admin-map-marker[data-kind="distractor"] { background: #8b5cf6; }
 .primary-admin-map-marker[data-kind="obstacle"] { background: #8a5b35; border-radius: 45% 58% 42% 55%; }
+.primary-admin-map-marker[data-kind="bin"] { background: #f8fafc; color: #0b1220; border-radius: 4px; }
 .primary-admin-map-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 9px; color: #b8cce4; font-size: 11px; }
 .primary-admin-map-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .primary-admin-map-legend span::before { width: 9px; height: 9px; border-radius: 50%; background: #1682e9; content: ""; }
@@ -2687,12 +2688,14 @@ h1 {
 .primary-admin-map-legend [data-kind="storage"]::before { background: #22c55e; }
 .primary-admin-map-legend [data-kind="distractor"]::before { background: #8b5cf6; }
 .primary-admin-map-legend [data-kind="obstacle"]::before { background: #8a5b35; }
+.primary-admin-map-legend [data-kind="bin"]::before { background: #f8fafc; border-radius: 2px; }
 .primary-admin-map-fields { display: grid; gap: 10px; max-height: 520px; overflow: auto; padding-right: 4px; }
 .primary-admin-map-fields fieldset { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 10px; border: 1px solid rgba(139, 170, 218, .2); border-radius: 9px; }
 .primary-admin-map-fields legend { padding: 0 5px; color: #cde8ff; font-size: 12px; font-weight: 850; }
 .primary-admin-map-fields label { display: grid; gap: 4px; color: #aebfd6; font-size: 11px; }
 .primary-admin-coordinate-inputs { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
 .primary-admin-coordinate-inputs input { width: 100%; min-width: 0; height: 32px; padding: 0 6px; color: #eff7ff; border: 1px solid rgba(139, 170, 218, .3); border-radius: 6px; background: #081526; }
+.primary-admin-map-fields .primary-admin-count-input { width: 100%; min-width: 0; height: 32px; padding: 0 6px; color: #eff7ff; border: 1px solid rgba(139, 170, 218, .3); border-radius: 6px; background: #081526; }
 .primary-admin-map-note { margin: 12px 0 0 !important; }
 
 .primary-admin-record-dialog { width: min(94vw, 900px); }
