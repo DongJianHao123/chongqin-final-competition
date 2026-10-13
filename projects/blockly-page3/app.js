@@ -73,6 +73,7 @@ const primaryPublishedMaps = new Map();
 const MAX_PROGRAM_LOOP_ITERATIONS = 100;
 const MAX_PROGRAM_PROCEDURE_CALLS = 1000;
 const MAX_PROGRAM_PROCEDURE_DEPTH = 50;
+const PROGRAM_TIME_LIMIT_MS = 3 * 60 * 1000;
 const PRIMARY_WORLD_UNITS_PER_METER = 8;
 const PRIMARY_CM_PER_WORLD_UNIT = 100 / PRIMARY_WORLD_UNITS_PER_METER;
 const PRIMARY_DRIVE_WORLD_UNITS_PER_SECOND = 1.25;
@@ -684,6 +685,9 @@ const runSelectedBlocksButton = document.querySelector("#runSelectedBlocksButton
 const selectAllBlocksButton = document.querySelector("#selectAllBlocksButton");
 const copyBlocksButton = document.querySelector("#copyBlocksButton");
 const pasteBlocksButton = document.querySelector("#pasteBlocksButton");
+const exportBlocksButton = document.querySelector("#exportBlocksButton");
+const importBlocksButton = document.querySelector("#importBlocksButton");
+const blocklyProgramFileInput = document.querySelector("#blocklyProgramFileInput");
 const sidePanel = document.querySelector(".side-panel");
 const stateSceneSplitter = document.querySelector("#stateSceneSplitter");
 const statusText = document.querySelector("#statusText");
@@ -1012,6 +1016,18 @@ function renderPrimaryScore() {
   const score = primaryScoreSnapshot();
   if (primaryScoreValue) primaryScoreValue.textContent = formatPrimaryElapsedTime(score.elapsedMs);
   primaryScoreHud.classList.toggle("is-complete", Boolean(missionAttempt?.completed));
+}
+
+// 比赛时间上限：程序执行时间（模拟器为逻辑用时，真实小车为墙钟用时）达到
+// 3 分钟即中断当前小车动作与积木代码执行，并提示时间已到。
+function enforceProgramTimeLimit() {
+  const context = activeRun;
+  if (!context || context.signal.aborted || context.phase !== "running") return;
+  if (primaryScoreSnapshot().elapsedMs < PROGRAM_TIME_LIMIT_MS) return;
+  abortRunContext(context, "time-limit");
+  setStatus("时间已到");
+  addLog("程序执行时间已达 3 分钟上限，已中断当前小车与代码执行。");
+  showRuntimeFeedback("时间已到", "3 分钟时间限制已到，程序已自动中断。", { tone: "warning" });
 }
 
 function setPrimaryScoreExpanded(expanded, { persist = true } = {}) {
@@ -3509,6 +3525,90 @@ async function pasteBlocklySelection() {
   });
   updateCode();
   showToast(`✓ 已粘贴 ${states.length} 个积木`);
+}
+
+// —— 积木代码导入 / 导出（JSON 文件）——
+const BLOCKLY_PROGRAM_FILE_FORMAT = "chenlong-blockly-program";
+const BLOCKLY_PROGRAM_FILE_VERSION = 1;
+
+function blocklyProgramFileBaseName() {
+  const label = (currentSnapshotTaskLabel() || "program").replace(/[\\/:*?"<>|\s]+/g, "-");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  return `${label}-${stamp}.json`;
+}
+
+function exportBlocklyProgram() {
+  if (!workspace) return;
+  let workspaceJson;
+  try {
+    workspaceJson = Blockly.serialization.workspaces.save(workspace);
+  } catch (_error) {
+    showToast("导出失败：无法序列化积木");
+    return;
+  }
+  const payload = {
+    format: BLOCKLY_PROGRAM_FILE_FORMAT,
+    version: BLOCKLY_PROGRAM_FILE_VERSION,
+    exportedAt: new Date().toISOString(),
+    taskId: activeBlocklyWorkspaceTaskId() || "",
+    taskLabel: currentSnapshotTaskLabel() || "",
+    workspace: workspaceJson
+  };
+  const text = JSON.stringify(payload, null, 2);
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = blocklyProgramFileBaseName();
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast("✓ 已导出积木代码");
+}
+
+function normalizeImportedBlocklyProgram(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  if (raw.format && raw.format !== BLOCKLY_PROGRAM_FILE_FORMAT) return null;
+  if (raw.version && typeof raw.version !== "number") return null;
+  // 兼容两种形态：带信封的 {workspace:...}，或纯 workspaces.save 快照
+  return raw.workspace ?? (raw.blocks ? raw : null);
+}
+
+function importBlocklyProgramFile(file) {
+  if (!workspace || !file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    let raw;
+    try {
+      raw = JSON.parse(String(reader.result));
+    } catch (_error) {
+      showToast("导入失败：文件不是有效的 JSON");
+      return;
+    }
+    const workspaceJson = normalizeImportedBlocklyProgram(raw);
+    if (!workspaceJson) {
+      showToast("导入失败：文件格式不正确");
+      return;
+    }
+    clearMultiSelection();
+    try {
+      workspace.clear();
+      Blockly.serialization.workspaces.load(workspaceJson, workspace);
+    } catch (_error) {
+      showToast("导入失败：积木内容无法加载");
+      return;
+    }
+    updateCode();
+    try { centerBlocklyWorkspace(); } catch (_error) {}
+    showToast("✓ 已导入积木代码");
+  };
+  reader.onerror = () => showToast("导入失败：无法读取文件");
+  reader.readAsText(file);
+}
+
+function triggerBlocklyProgramImport() {
+  blocklyProgramFileInput?.click();
 }
 
 // —— 积木快照（保存 / 恢复）——
@@ -9469,6 +9569,7 @@ function animate(timestamp = performance.now()) {
   if (activeRun && timestamp - lastPrimaryScoreClockRenderAt >= 100) {
     lastPrimaryScoreClockRenderAt = timestamp;
     renderPrimaryScore();
+    enforceProgramTimeLimit();
   }
   const targetFps = targetRenderFps();
   if (targetFps <= 0) {
@@ -9901,6 +10002,13 @@ runSelectedBlocksButton?.addEventListener("click", runSelectedBlocks);
 selectAllBlocksButton?.addEventListener("click", selectAllBlocklyBlocks);
 copyBlocksButton?.addEventListener("click", copyBlocklySelection);
 pasteBlocksButton?.addEventListener("click", () => void pasteBlocklySelection());
+exportBlocksButton?.addEventListener("click", exportBlocklyProgram);
+importBlocksButton?.addEventListener("click", triggerBlocklyProgramImport);
+blocklyProgramFileInput?.addEventListener("change", event => {
+  const file = event.target.files?.[0];
+  if (file) importBlocklyProgramFile(file);
+  event.target.value = "";
+});
 saveSnapshotButton?.addEventListener("click", () => {
   if (saveBlocklySnapshot()) flashSnapshotSaved();
 });

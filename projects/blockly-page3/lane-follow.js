@@ -4,6 +4,12 @@
 
   const scriptUrl = global.document?.currentScript?.src || global.document?.baseURI || global.location?.href;
   const sdkUrl = new URL("./lane/src/junction_follower.mjs", scriptUrl);
+  const laneSrcDir = new URL("./lane/src/", scriptUrl).href;
+  const SDK_MODULE_NAMES = [
+    "branch.mjs", "camera_geometry.mjs", "crossing_stop.mjs", "follow_config.mjs",
+    "intersection.mjs", "junction_follower.mjs", "junction_policy.mjs", "lane.mjs",
+    "runtime_config.mjs", "worker.mjs"
+  ];
   let sdkPromise = null;
   let activeRun = null;
 
@@ -13,6 +19,22 @@
       throw error;
     });
     return sdkPromise;
+  }
+
+  // 页面打开时即预热全部巡线模块：逐条 fetch（顺带写入 Service Worker 缓存，断网后
+  // 由 SW 兜底）+ 动态 import 主线程入口（把模块图加载进内存）。onProgress(done, total, name)
+  // 用于驱动加载进度条。任一条失败不阻断整体，仅记日志。
+  function preload(onProgress) {
+    const total = SDK_MODULE_NAMES.length;
+    let loaded = 0;
+    const report = () => {
+      loaded += 1;
+      try { onProgress?.(loaded, total, SDK_MODULE_NAMES[loaded - 1]); } catch (error) { console.error(error); }
+    };
+    const warm = Promise.all(SDK_MODULE_NAMES.map(name =>
+      fetch(laneSrcDir + name).then(report, report)
+    ));
+    return warm.then(() => loadSdk()).then(() => {});
   }
 
   function notify(callback, value) {
@@ -267,5 +289,20 @@
     return control;
   }
 
-  global.BlocklyLaneFollow = { start, renderOverlay };
+  global.BlocklyLaneFollow = { start, renderOverlay, preload };
+
+  // 打开页面即预热巡线 SDK，避免连接小车断网后首次执行巡线才联网拉取而失败。
+  // 有进度条则同步更新；10 秒兜底隐藏，防止任何异常导致遮罩卡住。
+  if (global.document) {
+    const overlay = global.document.getElementById("blocklyResourceLoader");
+    const fill = global.document.getElementById("blocklyResourceLoaderFill");
+    const status = global.document.getElementById("blocklyResourceLoaderStatus");
+    const finish = () => overlay?.classList.add("is-hidden");
+    const safety = setTimeout(finish, 10000);
+    preload((done, total, name) => {
+      if (fill) fill.style.width = Math.round((done / total) * 100) + "%";
+      if (status) status.textContent = `加载 ${name}（${done}/${total}）`;
+    }).then(() => { clearTimeout(safety); finish(); })
+      .catch(() => { clearTimeout(safety); finish(); });
+  }
 })(window);

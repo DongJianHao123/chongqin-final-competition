@@ -275,6 +275,7 @@ const BLOCKLY_STATIC_FILES = new Map([
   ["/admin.js", "admin.js"],
   ["/app.js", "app.js"],
   ["/lane-follow.js", "lane-follow.js"],
+  ["/sw.js", "sw.js"],
   ["/lane/src/branch.mjs", path.join("lane", "src", "branch.mjs")],
   ["/lane/src/camera_geometry.mjs", path.join("lane", "src", "camera_geometry.mjs")],
   ["/lane/src/crossing_stop.mjs", path.join("lane", "src", "crossing_stop.mjs")],

@@ -13,8 +13,24 @@
   <script src="./vendor/blockly/msg/zh-hans.js"></script>
   <script src="./vendor/three/three.min.js"></script>
   <script src="./vendor/lucide/lucide.min.js"></script>
+  <style>
+    #blocklyResourceLoader{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.72);backdrop-filter:blur(4px);transition:opacity .3s ease}
+    #blocklyResourceLoader.is-hidden{opacity:0;pointer-events:none}
+    .blockly-resource-loader-card{width:min(320px,80vw);padding:24px 22px;border-radius:14px;background:#0f172a;color:#e2e8f0;box-shadow:0 12px 40px rgba(0,0,0,.45);text-align:center}
+    .blockly-resource-loader-title{font-size:15px;font-weight:600;margin-bottom:14px}
+    .blockly-resource-loader-bar{height:8px;border-radius:999px;overflow:hidden;background:#1e293b;margin-bottom:10px}
+    .blockly-resource-loader-fill{height:100%;width:0%;background:linear-gradient(90deg,#38bdf8,#2563eb);transition:width .18s ease}
+    .blockly-resource-loader-status{font-size:12px;color:#94a3b8;min-height:16px}
+  </style>
 </head>
 <body>
+  <div id="blocklyResourceLoader" role="status" aria-live="polite">
+    <div class="blockly-resource-loader-card">
+      <div class="blockly-resource-loader-title">正在加载巡线资源…</div>
+      <div class="blockly-resource-loader-bar"><div class="blockly-resource-loader-fill" id="blocklyResourceLoaderFill"></div></div>
+      <div class="blockly-resource-loader-status" id="blocklyResourceLoaderStatus">准备中…</div>
+    </div>
+  </div>
   <main class="app-shell">
     <header class="topbar">
       <div class="brand-lockup">
@@ -27,7 +43,7 @@
       <div class="topbar-actions" aria-label="运行控制">
         <select id="targetSelect"><option value="real">真实小车</option><option value="sim">3D 模拟器</option></select>
         <label class="robot-connection" id="robotConnection">
-          <span class="protocol-toggle" id="protocolToggle"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button></span>
+          <span class="protocol-toggle" id="protocolToggle" title="点击切换小车请求协议 HTTP/HTTPS"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button><button class="protocol-btn" data-protocol="https" type="button">HTTPS</button></span>
           <input id="robotBaseUrl" value="192.168.4.1"><button id="applyRobotIpButton" type="button">确认</button>
           <label class="robot-speed-field" title="真实小车前进/后退速度（0-50）"><span>直行</span><input id="realMoveSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
           <label class="robot-speed-field" title="真实小车转弯速度（0-50）"><span>转弯</span><input id="realTurnSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
@@ -80,7 +96,10 @@
             <button id="copyBlocksButton" title="复制选中的积木（Ctrl+C）"><i data-lucide="copy"></i></button>
             <button id="pasteBlocksButton" title="粘贴积木（Ctrl+V）"><i data-lucide="clipboard-paste"></i></button>
             <button id="deleteBlocksButton" title="删除选中的积木"><i data-lucide="trash-2"></i></button>
+            <button id="exportBlocksButton" title="导出积木代码为 JSON 文件"><i data-lucide="download"></i></button>
+            <button id="importBlocksButton" title="从 JSON 文件导入积木代码"><i data-lucide="upload"></i></button>
           </div>
+          <input type="file" id="blocklyProgramFileInput" accept=".json,application/json" hidden />
         </div>
       </div>
       <div class="splitter" id="workspaceSplitter" role="separator" aria-orientation="vertical" aria-label="调整 Blockly 和 3D 模拟器宽度"></div>
@@ -172,7 +191,6 @@
                 </div>
                 <div class="primary-score-summary">
                   <b id="primaryScoreValue">00:00.0</b>
-                  <small class="score-reference-note">用时越短<br>排名越高</small>
                 </div>
               </header>
             </section>
@@ -380,5 +398,10 @@
   <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
   <script src="./lane-follow.js?v=20261010-lane-sdk-001"></script>
   <script src="./app.js?v=20261010-real-error-continue-001"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(function () {});
+    }
+  </script>
 </body>
 </html>
