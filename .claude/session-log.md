@@ -124,3 +124,48 @@ Blockly 全选改为选中所有连贯积木集合（不分主函数内外）：
 
 ## 2026-10-10 17:06
 server.js textAssetCacheControl 改为文本资源统一 no-cache + ETag 条件请求(304)，去掉 ?v= 的一年 immutable 强缓存，根治「改了内容漏 bump ?v= 导致线上旧代码」。node --check 通过。
+
+## 2026-10-10 17:49
+修复巡线摄像头 open 失败阻断循迹：worker.mjs 对 /api/camera/open 的冗余“确保开启”改为非致命（open 失败如 mixed-content 拦截/摄像头已开不 fail 整条循迹，继续拉流）；app.js followLineToJunction 的 finally 里 lane.stop() 二次报错改为仅记日志不外抛。根因是 HTTPS 页面请求 HTTP 小车接口被浏览器 mixed-content 拦截，真实小车场景应走 HTTP 访问。
+
+## 2026-10-10 18:16
+巡线重构：把摄像头流拉取从小车 worker 移到浏览器主线程，复用页面已开启的 <img> 预览流做采样。worker.mjs 改为仅做检测（接收 320x240 RGBA 帧，去掉 fetch/stream/camera-open 网络 I/O）；junction_follower.mjs 增加 pushFrame + 重导出 camera_geometry；lane-follow.js 增加 startFrameSampler 采样循环；app.js followLineToJunction 不再 stopRealCameraPreview、传入 cameraElement，show/hide 画布不再隐藏 .camera-view；index.html <img> 加 crossorigin=anonymous。根治 HTTPS 页面 mixed-content 拦截导致 Failed to fetch。
+
+## 2026-10-12 16:28
+顶部栏协议切换：index.html 给 protocolToggle 补上 HTTPS 按钮（HTTP|HTTPS 分段控件，复用已有 setRobotProtocol/点击 handler，点击即切换 chenlongRobotProtocol 并重启真实小车预览）。
+
+## 2026-10-12 16:54
+新增 3 分钟比赛时间上限：app.js 加 PROGRAM_TIME_LIMIT_MS=3*60*1000 常量与 enforceProgramTimeLimit()（在 animate 渲染循环每 100ms 检查，超时 abortRunContext('time-limit') 中断小车与代码，提示「时间已到」）。真实小车/模拟器通用：模拟器用逻辑用时、实车用墙钟用时。
+
+## 2026-10-12 17:07
+Blockly 增加积木代码导入/导出（JSON 文件）：index.html 工具栏新增导出(download)/导入(upload)按钮 + 隐藏 file input；app.js 新增 exportBlocklyProgram/importBlocklyProgramFile/triggerBlocklyProgramImport，导出带 format/version 信封的 workspace JSON，导入兼容信封或纯 workspaces.save 快照并走 workspace.clear+load+updateCode+center。node --check 通过。
+
+## 2026-10-13 09:56
+修复断网后巡线积木 Failed to fetch dynamically imported module：根因是巡线 SDK(lane/src/*.mjs) 在「执行巡线积木」时才动态 import + new Worker 拉取，且这些 .mjs 服务端返回 no-store 不缓存，连接小车断网即失败。方案：新增 sw.js（Service Worker，install 预缓存 10 个 .mjs、cache-first 接管 /blockly/lane/、skipWaiting+clients.claim 立即生效）；lane-follow.js 打开页面即预热（逐条 fetch 给进度 + import 入口进模块图）；index.html 加加载遮罩进度条 + 注册 SW；server.js 注册 /sw.js 路由。node --check 通过。
+
+## 2026-10-13 10:13
+把 Blockly 导入/导出按钮从工具栏移到「保存快照」旁边并统一风格：index.html 导出/导入按钮从 .blockly-controls 移到 .blockly-editor-actions（保存快照之后），改为 pill 带文字样式；styles.css 新增 .snapshot-tool-button 类（复用 snapshot 按钮基础样式，中性灰配色）。
+
+## 2026-10-13 10:46
+修复快照预览「无法预览该快照」：createRobotLabBlocklyTheme 改为缓存主题只注册一次（Blockly.defineTheme 重名会抛 already registered），renderSnapshotPreview 拆开 catch 并 console.error 暴露真实错误
+
+## 2026-10-13 10:50
+快照「查看」改为卡片内联下拉展开（手风琴式），移除独立预览跳转页；renderSnapshotList 生成 .snapshot-item+内嵌 .snapshot-card-preview，toggleSnapshotPreview 切换展开/收起，删除 openSnapshotViewer/closeSnapshotViewer 及对应 HTML/CSS
+
+## 2026-10-13 10:56
+快照支持命名：saveBlocklySnapshot 增加 name 字段，列表卡片主标题改为可点击重命名（点击名称→输入框，Enter/失焦保存、Esc 取消），新增 renameBlocklySnapshot/beginRenameSnapshot
+
+## 2026-10-13 11:00
+快照名称后加编辑（铅笔）图标引导重命名：renderSnapshotList 生成 name-row（名称+图标），图标与名称点击均触发重命名，渲染后调用 lucide.createIcons 生成图标
+
+## 2026-10-13 11:09
+暂时去掉 HTTPS 协议按钮：index.html 协议分段控件只保留 HTTP 按钮（data-protocol=http），app.js setRobotProtocol 遍历逻辑无需改动
+
+## 2026-10-13 11:17
+修复模拟器巡线第二次命令卡住：根因是巡线到达路口后 progressCm 已在道路端点，remainingToEndCm≈0 直接判定已到路口停车。改为循环沿路行驶，命令一开始停在分叉路口时经 lineContinuationExit 选直行出口继续下一段路
+
+## 2026-10-13 11:39
+模拟器巡线第二次命令继续下一段路（followBlocklyLine 改循环+lineContinuationExit 选直行出口）；目标物交付改放到离存放点最近白框（nearestBinTo）；任务一去掉末尾回起点（goal:null、guidePath 去尾部 start、slice(1,-1)改slice(1)）
+
+## 2026-10-13 11:48
+修复模拟器巡线遇到路口不停车：followBlocklyLine 的循环在到达端点后 continue 会重算 roadState 选中续行道路而穿过路口。改为单次行驶到端点即停，仅命令一开始已压路口时才经 lineContinuationExit 转入直行出口；lineContinuationExit 增加 endStoppedBy 返回远端节点类型

@@ -1181,7 +1181,8 @@ h1 {
 }
 
 .snapshot-save-button,
-.snapshot-history-button {
+.snapshot-history-button,
+.snapshot-tool-button {
   display: inline-flex;
   height: 30px;
   align-items: center;
@@ -1194,7 +1195,8 @@ h1 {
 }
 
 .snapshot-save-button svg,
-.snapshot-history-button svg {
+.snapshot-history-button svg,
+.snapshot-tool-button svg {
   width: 14px;
   height: 14px;
 }
@@ -1217,6 +1219,16 @@ h1 {
 
 .snapshot-history-button:hover {
   background: rgba(47, 91, 147, .42);
+}
+
+.snapshot-tool-button {
+  border: 1px solid rgba(148, 163, 184, .32);
+  background: rgba(71, 85, 105, .22);
+  color: #cbd5e1;
+}
+
+.snapshot-tool-button:hover {
+  background: rgba(71, 85, 105, .42);
 }
 
 .blockly-workspace-tab {
@@ -2494,10 +2506,53 @@ h1 {
   min-width: 0;
 }
 
-.snapshot-card-time {
+.snapshot-card-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.snapshot-card-name {
   color: #e5effc;
   font-size: 13px;
-  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-card-name:hover {
+  color: #bfe8ff;
+}
+
+.snapshot-card-name-edit {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: #8298b9;
+  cursor: pointer;
+}
+
+.snapshot-card-name-edit:hover {
+  color: #bfe8ff;
+}
+
+.snapshot-card-name-edit .lucide {
+  width: 13px;
+  height: 13px;
+}
+
+.snapshot-card-name-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 6px;
+  color: #e5effc;
+  font-size: 13px;
+  background: #0e192b;
+  border: 1px solid rgba(100, 190, 255, .4);
+  border-radius: 6px;
 }
 
 .snapshot-card-task {
@@ -2563,49 +2618,25 @@ h1 {
   justify-content: flex-end;
 }
 
-.snapshot-list-view,
-.snapshot-preview-view {
+.snapshot-list-view {
   display: grid;
   gap: 14px;
 }
 
-.snapshot-list-view[hidden],
-.snapshot-preview-view[hidden] {
-  display: none;
-}
-
-.snapshot-preview-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+.snapshot-item {
+  display: grid;
   gap: 10px;
 }
 
-.snapshot-preview-time {
-  color: #9eb1cd;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-}
-
-.snapshot-viewer-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.snapshot-viewer-actions button {
-  width: auto;
-  min-width: 34px;
-  height: 34px;
-  padding: 0 12px;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.snapshot-viewer-canvas {
-  height: min(62vh, 560px);
+.snapshot-card-preview {
+  height: min(46vh, 420px);
+  border: 1px solid rgba(139, 170, 218, .18);
   border-radius: 10px;
   background: #0e192b;
+}
+
+.snapshot-card-preview[hidden] {
+  display: none;
 }
 
 .primary-team-code {

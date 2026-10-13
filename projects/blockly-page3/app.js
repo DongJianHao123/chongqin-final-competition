@@ -280,7 +280,7 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
     packages,
     landmarks: { targets, distractors, storage, bins },
     checkpointLabels: [...task.checkpointLabels],
-    goal: [...start],
+    goal: null,
     showGuidePath: false,
     completion: {
       type: "composite",
@@ -291,7 +291,7 @@ function createPrimaryGuangyangMission(level, publishedMap = null) {
       packageRadius: 0.28,
       minimumRoadEdgeClearance: 0.2
     },
-    guidePath: [[...start], ...checkpoints, [...start]]
+    guidePath: [[...start], ...checkpoints]
   };
 }
 
@@ -783,12 +783,6 @@ const snapshotDialog = document.querySelector("#snapshotDialog");
 const snapshotList = document.querySelector("#snapshotList");
 const closeSnapshotDialogButton = document.querySelector("#closeSnapshotDialogButton");
 const snapshotNewButton = document.querySelector("#snapshotNewButton");
-const snapshotListView = document.querySelector("#snapshotListView");
-const snapshotPreviewView = document.querySelector("#snapshotPreviewView");
-const snapshotViewerTitle = document.querySelector("#snapshotViewerTitle");
-const snapshotViewerCanvas = document.querySelector("#snapshotViewerCanvas");
-const snapshotViewerRestoreButton = document.querySelector("#snapshotViewerRestoreButton");
-const snapshotBackButton = document.querySelector("#snapshotBackButton");
 const missionCard = document.querySelector(".mission-card");
 const missionCardToggle = document.querySelector("#missionCardToggle");
 const missionCardBody = document.querySelector("#missionCardBody");
@@ -1124,7 +1118,7 @@ function getMazeCheckpointPositions() {
 function getMissionCheckpointPositions(spec) {
   if ((spec?.checkpointSource === "guidePath" || activeMission.theme !== "maze")
     && Array.isArray(activeMission.guidePath)) {
-    return activeMission.guidePath.slice(1, -1).map(point => [...point]);
+    return activeMission.guidePath.slice(1).map(point => [...point]);
   }
   return activeMission.theme === "maze" ? getMazeCheckpointPositions() : [];
 }
@@ -1174,13 +1168,34 @@ function initializeMissionAttempt() {
   evaluateMissionProgress({ allowComplete: true, announce: false });
 }
 
+function nearestBinTo(point, bins) {
+  if (!Array.isArray(point) || point.length < 2) return null;
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const bin of bins) {
+    if (!Array.isArray(bin) || bin.length < 2) continue;
+    const distance = Math.hypot(bin[0] - point[0], bin[1] - point[1]);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearest = bin;
+    }
+  }
+  return nearest;
+}
+
 function deliveredTargetPackageIds() {
   const delivered = new Set();
-  if (!missionAttempt || !Array.isArray(activeMission.landmarks?.storage)) return delivered;
-  const [storageX, storageZ] = activeMission.landmarks.storage;
+  if (!missionAttempt) return delivered;
+  const storage = activeMission.landmarks?.storage;
+  const bins = Array.isArray(activeMission.landmarks?.bins) ? activeMission.landmarks.bins : [];
+  // 目标物（橙子）放入离存放点最近的白框即算交付；没有白框时回退到存放点半径判定。
+  const targetBin = bins.length ? nearestBinTo(storage, bins) : null;
   ensureMissionPackages().forEach(record => {
     if (!missionAttempt.targetPackageIds.has(record.id) || record.id === heldPackageId) return;
-    if (Math.hypot(record.x - storageX, record.z - storageZ) <= missionAttempt.spec.deliveryRadius) delivered.add(record.id);
+    const insideBin = Boolean(targetBin && pointInsideBin(record.x, record.z, targetBin));
+    const nearStorage = !targetBin && Array.isArray(storage)
+      && Math.hypot(record.x - storage[0], record.z - storage[1]) <= missionAttempt.spec.deliveryRadius;
+    if (insideBin || nearStorage) delivered.add(record.id);
   });
   return delivered;
 }
@@ -2067,29 +2082,33 @@ function defineSafeLoopGenerators() {
   };
 }
 
+let robotLabBlocklyTheme = null;
 function createRobotLabBlocklyTheme() {
-  return Blockly.Theme.defineTheme("chenlongRobotLab", {
-    base: Blockly.Themes.Classic,
-    componentStyles: {
-      workspaceBackgroundColour: "#0e192b",
-      toolboxBackgroundColour: "#101e33",
-      toolboxForegroundColour: "#c9dbf1",
-      flyoutBackgroundColour: "#152641",
-      flyoutForegroundColour: "#dcecff",
-      flyoutOpacity: 0.97,
-      scrollbarColour: "#4d688e",
-      scrollbarOpacity: 0.72,
-      insertionMarkerColour: "#51e5c4",
-      insertionMarkerOpacity: 0.48,
-      cursorColour: "#6ee7ff",
-      markerColour: "#7dd3fc"
-    },
-    fontStyle: {
-      family: "Arial, Microsoft YaHei, sans-serif",
-      weight: "700",
-      size: 12
-    }
-  });
+  if (!robotLabBlocklyTheme) {
+    robotLabBlocklyTheme = Blockly.Theme.defineTheme("chenlongRobotLab", {
+      base: Blockly.Themes.Classic,
+      componentStyles: {
+        workspaceBackgroundColour: "#0e192b",
+        toolboxBackgroundColour: "#101e33",
+        toolboxForegroundColour: "#c9dbf1",
+        flyoutBackgroundColour: "#152641",
+        flyoutForegroundColour: "#dcecff",
+        flyoutOpacity: 0.97,
+        scrollbarColour: "#4d688e",
+        scrollbarOpacity: 0.72,
+        insertionMarkerColour: "#51e5c4",
+        insertionMarkerOpacity: 0.48,
+        cursorColour: "#6ee7ff",
+        markerColour: "#7dd3fc"
+      },
+      fontStyle: {
+        family: "Arial, Microsoft YaHei, sans-serif",
+        weight: "700",
+        size: 12
+      }
+    });
+  }
+  return robotLabBlocklyTheme;
 }
 
 const BLOCKLY_WORKSPACE_STORAGE_PREFIX = "chenlongBlocklyPrimaryWorkspace.v2";
@@ -3615,7 +3634,9 @@ function triggerBlocklyProgramImport() {
 const BLOCKLY_SNAPSHOTS_KEY = "chenlongBlocklySnapshots.v1";
 const BLOCKLY_SNAPSHOTS_MAX = 20;
 let snapshotPreviewWorkspace = null;
-let snapshotViewing = null;
+let snapshotPreviewId = null;
+let snapshotPreviewDiv = null;
+let snapshotPreviewButton = null;
 let snapshotSavedFlashTimer = null;
 
 function readBlocklySnapshots() {
@@ -3659,6 +3680,7 @@ function saveBlocklySnapshot() {
   const snapshot = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: Date.now(),
+    name: "",
     taskId: activeBlocklyWorkspaceTaskId() || "",
     taskLabel: currentSnapshotTaskLabel(),
     json
@@ -3687,10 +3709,49 @@ function deleteBlocklySnapshot(id) {
   writeBlocklySnapshots(readBlocklySnapshots().filter(s => s.id !== id));
 }
 
+function renameBlocklySnapshot(id, name) {
+  const snapshots = readBlocklySnapshots();
+  const target = snapshots.find(s => s.id === id);
+  if (!target) return;
+  target.name = name;
+  writeBlocklySnapshots(snapshots);
+}
+
+function beginRenameSnapshot(snapshot, nameEl) {
+  if (!nameEl) return;
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "snapshot-card-name-input";
+  input.value = snapshot.name || formatSnapshotTime(snapshot.timestamp);
+  input.maxLength = 40;
+  let finished = false;
+  const commit = () => {
+    if (finished) return;
+    finished = true;
+    const value = input.value.trim();
+    renameBlocklySnapshot(snapshot.id, value);
+    nameEl.textContent = value || formatSnapshotTime(snapshot.timestamp);
+    input.replaceWith(nameEl);
+  };
+  const cancel = () => {
+    if (finished) return;
+    finished = true;
+    input.replaceWith(nameEl);
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") { event.preventDefault(); commit(); }
+    else if (event.key === "Escape") { event.preventDefault(); cancel(); }
+  });
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
 function refreshSnapshotHistoryButton() {
   const count = readBlocklySnapshots().length;
   const span = snapshotHistoryButton?.querySelector("span");
-  if (span) span.textContent = count > 0 ? `历史 (${count})` : "历史";
+  if (span) span.textContent = count > 0 ? `快照历史 (${count})` : "快照历史";
 }
 
 function flashSnapshotSaved() {
@@ -3717,27 +3778,50 @@ function renderSnapshotList() {
   }
   for (const s of snapshots) {
     const sameTask = !s.taskId || s.taskId === currentTaskId;
+
+    const item = document.createElement("div");
+    item.className = "snapshot-item";
+
     const card = document.createElement("div");
     card.className = "snapshot-card";
 
     const meta = document.createElement("div");
     meta.className = "snapshot-card-meta";
-    const time = document.createElement("span");
-    time.className = "snapshot-card-time";
-    time.textContent = formatSnapshotTime(s.timestamp);
+
+    const nameRow = document.createElement("div");
+    nameRow.className = "snapshot-card-name-row";
+
+    const name = document.createElement("span");
+    name.className = "snapshot-card-name";
+    name.textContent = s.name || formatSnapshotTime(s.timestamp);
+    name.title = "点击重命名";
+    name.addEventListener("click", () => beginRenameSnapshot(s, name));
+
+    const editIcon = document.createElement("span");
+    editIcon.className = "snapshot-card-name-edit";
+    editIcon.title = "重命名";
+    editIcon.innerHTML = '<i data-lucide="pencil"></i>';
+    editIcon.addEventListener("click", () => beginRenameSnapshot(s, name));
+
+    nameRow.append(name, editIcon);
+
     const task = document.createElement("span");
     task.className = "snapshot-card-task";
     task.textContent = s.taskLabel || s.taskId || "任务";
-    meta.append(time, task);
+    meta.append(nameRow, task);
 
     const actions = document.createElement("div");
     actions.className = "snapshot-card-actions";
+
+    const preview = document.createElement("div");
+    preview.className = "snapshot-card-preview";
+    preview.hidden = true;
 
     const viewBtn = document.createElement("button");
     viewBtn.type = "button";
     viewBtn.className = "snapshot-view-button";
     viewBtn.textContent = "查看";
-    viewBtn.addEventListener("click", () => openSnapshotViewer(s));
+    viewBtn.addEventListener("click", () => toggleSnapshotPreview(s, preview, viewBtn));
 
     const restoreBtn = document.createElement("button");
     restoreBtn.type = "button";
@@ -3757,6 +3841,7 @@ function renderSnapshotList() {
     deleteBtn.className = "snapshot-delete-button";
     deleteBtn.textContent = "删除";
     deleteBtn.addEventListener("click", () => {
+      if (snapshotPreviewId === s.id) disposeSnapshotPreview();
       deleteBlocklySnapshot(s.id);
       renderSnapshotList();
       refreshSnapshotHistoryButton();
@@ -3764,8 +3849,10 @@ function renderSnapshotList() {
 
     actions.append(viewBtn, restoreBtn, deleteBtn);
     card.append(meta, actions);
-    snapshotList.appendChild(card);
+    item.append(card, preview);
+    snapshotList.appendChild(item);
   }
+  if (window.lucide) window.lucide.createIcons();
 }
 
 function openSnapshotDialog() {
@@ -3778,11 +3865,18 @@ function disposeSnapshotPreview() {
     try { snapshotPreviewWorkspace.dispose(); } catch (_error) {}
     snapshotPreviewWorkspace = null;
   }
+  if (snapshotPreviewDiv) {
+    snapshotPreviewDiv.hidden = true;
+    snapshotPreviewDiv.innerHTML = "";
+  }
+  if (snapshotPreviewButton) snapshotPreviewButton.textContent = "查看";
+  snapshotPreviewId = null;
+  snapshotPreviewDiv = null;
+  snapshotPreviewButton = null;
 }
 
-function renderSnapshotPreview(snapshot) {
-  disposeSnapshotPreview();
-  const div = snapshotViewerCanvas;
+function renderSnapshotPreview(snapshot, container) {
+  const div = container;
   if (!div) return;
   div.innerHTML = "";
   try {
@@ -3793,32 +3887,37 @@ function renderSnapshotPreview(snapshot) {
       sounds: false,
       renderer: "zelos",
       theme: createRobotLabBlocklyTheme(),
-      zoom: { controls: false, wheel: false, startScale: 1, maxScale: 1.4, minScale: 0.4 }
+      zoom: { controls: false, wheel: true, startScale: 1, maxScale: 1.4, minScale: 0.4 }
     });
-    if (snapshot.json) {
-      Blockly.serialization.workspaces.load(snapshot.json, snapshotPreviewWorkspace);
-    }
-    try { snapshotPreviewWorkspace.zoomToFit(); } catch (_error) {}
   } catch (_error) {
+    console.error("快照预览：创建只读画布失败", _error);
     div.textContent = "无法预览该快照";
+    return;
   }
+  if (snapshot.json) {
+    try {
+      Blockly.serialization.workspaces.load(snapshot.json, snapshotPreviewWorkspace);
+    } catch (_error) {
+      console.error("快照预览：加载积木失败", _error);
+      div.textContent = "无法预览该快照";
+      return;
+    }
+  }
+  try { snapshotPreviewWorkspace.zoomToFit(); } catch (_error) {}
 }
 
-function openSnapshotViewer(snapshot) {
-  snapshotViewing = snapshot;
-  if (snapshotViewerTitle) snapshotViewerTitle.textContent = formatSnapshotTime(snapshot.timestamp);
-  const sameTask = !snapshot.taskId || snapshot.taskId === activeBlocklyWorkspaceTaskId();
-  if (snapshotViewerRestoreButton) snapshotViewerRestoreButton.disabled = !sameTask;
-  if (snapshotListView) snapshotListView.hidden = true;
-  if (snapshotPreviewView) snapshotPreviewView.hidden = false;
-  renderSnapshotPreview(snapshot);
-}
-
-function closeSnapshotViewer() {
+function toggleSnapshotPreview(snapshot, preview, viewBtn) {
+  if (snapshotPreviewId === snapshot.id) {
+    disposeSnapshotPreview();
+    return;
+  }
   disposeSnapshotPreview();
-  snapshotViewing = null;
-  if (snapshotPreviewView) snapshotPreviewView.hidden = true;
-  if (snapshotListView) snapshotListView.hidden = false;
+  snapshotPreviewId = snapshot.id;
+  snapshotPreviewDiv = preview;
+  snapshotPreviewButton = viewBtn;
+  preview.hidden = false;
+  viewBtn.textContent = "收起";
+  renderSnapshotPreview(snapshot, preview);
 }
 
 function initScene() {
@@ -7012,7 +7111,7 @@ function readBlocklyMission(context) {
   const tick = navigationSensorTick(context, "mission");
   const network = getPrimaryNavigationNetwork();
   const baseline = missionBaseline || activeMission;
-  const checkpointPoints = Array.isArray(baseline?.guidePath) ? baseline.guidePath.slice(1, -1) : [];
+  const checkpointPoints = Array.isArray(baseline?.guidePath) ? baseline.guidePath.slice(1) : [];
   const packages = normalizePackageRecords(baseline);
   const objectAnchors = [
     ...packages.filter(item => ["target", "distractor"].includes(item.role)).map(item => ({ role: item.role, x: item.x, z: item.z })),
@@ -7033,7 +7132,7 @@ function readBlocklyMission(context) {
       baseline.checkpointLabels?.[index] || `checkpoint-${index + 1}`,
       point
     )),
-    return: missionAnchor(network, "return", baseline.goal),
+    return: Array.isArray(baseline?.goal) ? missionAnchor(network, "return", baseline.goal) : null,
     objects: objectAnchors,
     tick
   };
@@ -7089,11 +7188,16 @@ function readBlocklyReleasePreview(context) {
   let wouldCompleteDelivery = false;
   let roadClearanceCm = null;
   let requiredRoadClearanceCm = null;
-  if (role === "target" && Array.isArray(activeMission.landmarks?.storage)) {
-    wouldCompleteDelivery = Math.hypot(
-      drop[0] - activeMission.landmarks.storage[0],
-      drop[1] - activeMission.landmarks.storage[1]
-    ) <= missionAttempt.spec.deliveryRadius + PHYSICS_EPSILON;
+  if (role === "target") {
+    const storage = activeMission.landmarks?.storage;
+    const bins = Array.isArray(activeMission.landmarks?.bins) ? activeMission.landmarks.bins : [];
+    const targetBin = bins.length ? nearestBinTo(storage, bins) : null;
+    wouldCompleteDelivery = targetBin
+      ? pointInsideBin(drop[0], drop[1], targetBin)
+      : Array.isArray(storage) && Math.hypot(
+          drop[0] - storage[0],
+          drop[1] - storage[1]
+        ) <= missionAttempt.spec.deliveryRadius + PHYSICS_EPSILON;
   } else if (role === "distractor" && Array.isArray(activeMission.landmarks?.bins)) {
     wouldCompleteDelivery = activeMission.landmarks.bins.some(bin => pointInsideBin(drop[0], drop[1], bin));
   }
@@ -7620,18 +7724,47 @@ async function followBlocklyRoad(context, maxCmValue = 100, speedValue = 40, obe
   return finishRoadControl(context, true, stoppedBy, state.roadId, driven.movedWorld, driven.elapsedTicks);
 }
 
+// 巡线到达路口后，沿主线直行方向选择下一条出口道路。返回该道路的行驶起止进度
+// 与距离；若当前节点没有可直行的出口则返回 null。
+function lineContinuationExit(network, state) {
+  if (!state?.nodeId) return null;
+  const exits = Array.isArray(state.exits) ? state.exits : [];
+  const chosen = exits
+    .filter(exit => exit && exit.roadId && Number.isFinite(exit.turnDeg))
+    .sort((left, right) => Math.abs(left.turnDeg) - Math.abs(right.turnDeg))[0];
+  if (!chosen) return null;
+  const node = network.node(state.nodeId);
+  const endpoint = node.exits.find(candidate => candidate.roadId === chosen.roadId);
+  if (!endpoint) return null;
+  const road = network.road(chosen.roadId);
+  const fromProgressCm = endpoint.side === "start" ? 0 : road.lengthCm;
+  const toProgressCm = endpoint.side === "start" ? road.lengthCm : 0;
+  const farNodeId = endpoint.side === "start" ? road.toNodeId : road.fromNodeId;
+  const farNode = network.node(farNodeId);
+  return {
+    roadId: chosen.roadId,
+    fromProgressCm,
+    toProgressCm,
+    distanceCm: Math.abs(toProgressCm - fromProgressCm),
+    endStoppedBy: farNode.roadIds.length >= 3 ? "junction" : "road_end"
+  };
+}
+
 async function followBlocklyLine(context, baseValue, kpValue, maxCorrectionValue) {
   beginRoadControl(context, "follow_line");
   const params = normalizeFollowLineParams(baseValue, kpValue, maxCorrectionValue);
   actionCount += 1;
   addLog(`自动巡线：沿地面黄线行驶，基础速度 ${params.base}%，行驶到路口后停车。`);
   const network = getPrimaryNavigationNetwork();
+  const speed = Math.round(Math.max(10, Math.min(100, params.base)));
+
   const state = network.roadState(robotPose, primaryWorldUnitsToCm(frontDistance()));
   if (!state.onRoad || !state.roadId) {
     setStatus("不在黄线上");
     addLog("自动巡线停止：小车当前没有压在黄线上。");
     return finishRoadControl(context, false, "off_line", null, 0, 0);
   }
+  const firstRoadId = state.roadId;
   const projection = network.project(robotPose.x, robotPose.z, state.roadId);
   const forward = directionVector();
   const record = network.road(state.roadId);
@@ -7645,26 +7778,53 @@ async function followBlocklyLine(context, baseValue, kpValue, maxCorrectionValue
   const node = network.node(nodeId);
   // 只在分叉路口（3 条及以上道路交汇）停车；道路尽头（单条道路端点）则停到尽头。
   const stoppedBy = node.roadIds.length >= 3 ? "junction" : "road_end";
-  // 巡线行驶到路口（道路端点）后再停下，不再提前 12cm 停。
   const endpointProgress = naturalDirection > 0 ? record.lengthCm : 0;
   const remainingToEndCm = Math.abs(endpointProgress - projection.progressCm);
-  const requestedDistanceCm = remainingToEndCm;
-  if (requestedDistanceCm <= 0.1) {
-    setStatus(stoppedBy === "junction" ? "沿线循迹已到路口" : "沿线循迹结束");
-    addLog("自动巡线完成：已到达路口并停车。");
-    return finishRoadControl(context, true, stoppedBy, state.roadId, 0, 0);
+
+  let totalMovedWorld = 0;
+  let totalElapsedTicks = 0;
+  let finalStoppedBy = stoppedBy;
+
+  if (remainingToEndCm <= 0.1) {
+    // 上一次巡线已经停在路口，本次命令从路口出发：转入直行出口沿主线继续下一段路。
+    if (stoppedBy === "junction") {
+      const continuation = lineContinuationExit(network, state);
+      if (continuation) {
+        const path = network.pathAlong(continuation.roadId, continuation.fromProgressCm, continuation.toProgressCm);
+        const driven = await driveBlocklyNavigationPath(context, path, speed, continuation.distanceCm, true);
+        totalMovedWorld += driven.movedWorld;
+        totalElapsedTicks += driven.elapsedTicks;
+        finalStoppedBy = driven.stoppedBy || continuation.endStoppedBy;
+      }
+    }
+  } else {
+    const path = network.pathAlong(state.roadId, projection.progressCm, endpointProgress);
+    const driven = await driveBlocklyNavigationPath(context, path, speed, remainingToEndCm, true);
+    totalMovedWorld += driven.movedWorld;
+    totalElapsedTicks += driven.elapsedTicks;
+    finalStoppedBy = driven.stoppedBy || stoppedBy;
   }
-  const speed = Math.round(Math.max(10, Math.min(100, params.base)));
-  const path = network.pathAlong(state.roadId, projection.progressCm, endpointProgress);
-  const driven = await driveBlocklyNavigationPath(context, path, speed, requestedDistanceCm, true);
-  const finalStoppedBy = driven.stoppedBy || stoppedBy;
-  if (finalStoppedBy === "junction") {
+
+  if (finalStoppedBy === "off_line") {
+    setStatus("不在黄线上");
+    addLog("自动巡线停止：小车当前没有压在黄线上。");
+  } else if (finalStoppedBy === "wrong_way") {
+    setStatus("逆行走黄线");
+    addLog("自动巡线停止：当前道路为单行道，方向相反。");
+  } else if (finalStoppedBy === "junction") {
     setStatus("沿线循迹已到路口");
     addLog("自动巡线完成：已到达路口并停车。");
   } else {
     setStatus("沿线循迹结束");
   }
-  return finishRoadControl(context, true, finalStoppedBy, state.roadId, driven.movedWorld, driven.elapsedTicks);
+  return finishRoadControl(
+    context,
+    finalStoppedBy !== "off_line" && finalStoppedBy !== "wrong_way",
+    finalStoppedBy,
+    firstRoadId,
+    totalMovedWorld,
+    totalElapsedTicks
+  );
 }
 
 async function takeBlocklyExit(context, roadIdValue, speedValue = 30, obeySpeedLimitValue = false) {
@@ -10020,14 +10180,7 @@ snapshotNewButton?.addEventListener("click", () => {
     renderSnapshotList();
   }
 });
-snapshotBackButton?.addEventListener("click", closeSnapshotViewer);
-snapshotViewerRestoreButton?.addEventListener("click", () => {
-  if (snapshotViewing && restoreBlocklySnapshot(snapshotViewing)) {
-    closeSnapshotViewer();
-    setStatus("已恢复快照");
-  }
-});
-snapshotDialog?.addEventListener("close", closeSnapshotViewer);
+snapshotDialog?.addEventListener("close", disposeSnapshotPreview);
 window.addEventListener("keydown", event => {
   if (!(event.ctrlKey || event.metaKey) || (event.key !== "s" && event.key !== "S")) return;
   const el = document.activeElement;

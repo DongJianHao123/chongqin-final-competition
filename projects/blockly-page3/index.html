@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>广阳岛 Blockly 闯关</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="./styles.css?v=20261010-blockly-toast-001">
+  <link rel="stylesheet" href="./styles.css?v=20261013-snapshot-edit-001">
   <link rel="stylesheet" href="./debug-run.css?v=20260918-penalty-log-001">
   <script src="./vendor/blockly/blockly_compressed.js"></script>
   <script src="./vendor/blockly/blocks_compressed.js"></script>
@@ -43,7 +43,7 @@
       <div class="topbar-actions" aria-label="运行控制">
         <select id="targetSelect"><option value="real">真实小车</option><option value="sim">3D 模拟器</option></select>
         <label class="robot-connection" id="robotConnection">
-          <span class="protocol-toggle" id="protocolToggle" title="点击切换小车请求协议 HTTP/HTTPS"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button><button class="protocol-btn" data-protocol="https" type="button">HTTPS</button></span>
+          <span class="protocol-toggle" id="protocolToggle" title="小车请求协议 HTTP"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button></span>
           <input id="robotBaseUrl" value="192.168.4.1"><button id="applyRobotIpButton" type="button">确认</button>
           <label class="robot-speed-field" title="真实小车前进/后退速度（0-50）"><span>直行</span><input id="realMoveSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
           <label class="robot-speed-field" title="真实小车转弯速度（0-50）"><span>转弯</span><input id="realTurnSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
@@ -77,7 +77,9 @@
           </div>
           <div class="blockly-editor-actions">
             <button id="saveSnapshotButton" class="snapshot-save-button" type="button" title="保存当前积木为快照（Ctrl+S）"><i data-lucide="camera"></i><span>保存快照</span></button>
-            <button id="snapshotHistoryButton" class="snapshot-history-button" type="button" title="查看已保存的积木快照"><i data-lucide="history"></i><span>历史</span></button>
+            <button id="exportBlocksButton" class="snapshot-tool-button" type="button" title="导出积木代码为 JSON 文件"><i data-lucide="upload"></i><span>导出</span></button>
+            <button id="importBlocksButton" class="snapshot-tool-button" type="button" title="从 JSON 文件导入积木代码"><i data-lucide="download"></i><span>导入</span></button>
+            <button id="snapshotHistoryButton" class="snapshot-history-button" type="button" title="查看已保存的积木快照"><i data-lucide="history"></i><span>快照历史</span></button>
             <div class="workspace-badge" id="workspaceSaveStatus" aria-live="polite"><i data-lucide="cloud"></i><span>自动保存已开启</span></div>
           </div>
         </div>
@@ -96,8 +98,6 @@
             <button id="copyBlocksButton" title="复制选中的积木（Ctrl+C）"><i data-lucide="copy"></i></button>
             <button id="pasteBlocksButton" title="粘贴积木（Ctrl+V）"><i data-lucide="clipboard-paste"></i></button>
             <button id="deleteBlocksButton" title="删除选中的积木"><i data-lucide="trash-2"></i></button>
-            <button id="exportBlocksButton" title="导出积木代码为 JSON 文件"><i data-lucide="download"></i></button>
-            <button id="importBlocksButton" title="从 JSON 文件导入积木代码"><i data-lucide="upload"></i></button>
           </div>
           <input type="file" id="blocklyProgramFileInput" accept=".json,application/json" hidden />
         </div>
@@ -379,16 +379,6 @@
         <div id="snapshotList" class="snapshot-list"></div>
         <footer><button id="snapshotNewButton" type="button" class="snapshot-save-button">保存当前快照</button></footer>
       </div>
-      <div id="snapshotPreviewView" class="snapshot-preview-view" hidden>
-        <div class="snapshot-preview-bar">
-          <span id="snapshotViewerTitle" class="snapshot-preview-time"></span>
-          <div class="snapshot-viewer-actions">
-            <button id="snapshotViewerRestoreButton" type="button" class="snapshot-restore-button">恢复</button>
-            <button id="snapshotBackButton" type="button" class="snapshot-view-button">返回列表</button>
-          </div>
-        </div>
-        <div id="snapshotViewerCanvas" class="snapshot-viewer-canvas"></div>
-      </div>
     </section>
   </dialog>
 
@@ -397,7 +387,7 @@
   <script src="./blockly-navigation-core.js?v=20260827-001"></script>
   <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
   <script src="./lane-follow.js?v=20261010-lane-sdk-001"></script>
-  <script src="./app.js?v=20261010-real-error-continue-001"></script>
+  <script src="./app.js?v=20261013-snapshot-edit-001"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("./sw.js").catch(function () {});

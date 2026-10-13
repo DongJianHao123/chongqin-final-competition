@@ -70,7 +70,9 @@
       "Bash(cp \"$SRC/lane-follow.js\" \"$DST/lane-follow.js\")",
       "Bash(cp \"$SRC\"/lane/src/*.mjs \"$DST/lane/src/\")",
       "Bash(grep -rhoE \"from [''''\"\"][^''''\"\"]+[''''\"\"]|import\\\\\\([''''\"\"][^''''\"\"]+[''''\"\"]\\\\\\)\" projects/blockly-page3/lane/src/*.mjs)",
-      "Bash(grep -rn \"/api/\" projects/blockly-page3/lane/src/*.mjs)"
+      "Bash(grep -rn \"/api/\" projects/blockly-page3/lane/src/*.mjs)",
+      "Bash(grep -oE \"defineTheme[^;]{0,120}\" blockly_compressed.js)",
+      "Bash(grep -oE \"inject=function\\\\\\(a,b\\\\\\)\\\\{[^}]{0,400}\" projects/blockly-page3/vendor/blockly/blockly_compressed.js)"
     ]
   }
 }
