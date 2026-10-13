@@ -323,11 +323,17 @@ function serveBlockly(request, response, pathname, searchParams) {
   const filePath = path.join(BLOCKLY_DIR, relative);
   const data = fs.readFileSync(filePath);
   const contentType = mimeType(filePath);
-  const isText = TEXT_STATIC_PATH_PATTERN.test(pathname) || pathname.endsWith(".html");
+  // 巡线 SDK 内核（lane/src/*.mjs）：HTTP 明文下无法注册 Service Worker，只能靠
+  // HTTP 缓存兜底，故给 1 天强缓存；不能走 rewriteBlocklyText（内核里的 /api/ 是
+  // 发给小车的路径，不能被改写成 /blockly/api/）。
+  const isLaneModule = /^\/lane\/src\/.+\.mjs$/.test(pathname);
+  const isText = !isLaneModule && (TEXT_STATIC_PATH_PATTERN.test(pathname) || pathname.endsWith(".html"));
   const body = isText ? rewriteBlocklyText(data, contentType) : data;
-  const cacheControl = isText
-    ? textAssetCacheControl(pathname, searchParams)
-    : (STATIC_STREAM_PATH_PATTERN.test(pathname) ? "public, max-age=3600" : "no-store, max-age=0");
+  const cacheControl = isLaneModule
+    ? "public, max-age=86400"
+    : isText
+      ? textAssetCacheControl(pathname, searchParams)
+      : (STATIC_STREAM_PATH_PATTERN.test(pathname) ? "public, max-age=3600" : "no-store, max-age=0");
   const etag = isText ? assetEtag(body) : null;
   const headers = {
     "Content-Type": contentType,

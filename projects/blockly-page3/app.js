@@ -6,6 +6,7 @@ const PRIMARY_GUANGYANG_MAPS = globalThis.PrimaryGuangyangMaps;
 if (!PRIMARY_GUANGYANG_MAPS) throw new Error("广阳岛地图配置没有加载，请刷新页面重试");
 const BLOCKLY_SIMULATION_CLOCK = globalThis.BlocklySimulationClock;
 if (!BLOCKLY_SIMULATION_CLOCK) throw new Error("模拟时钟没有加载，请刷新页面重试");
+const CHENLONG_OFFLINE = globalThis.__CHENLONG_OFFLINE__ === true;
 const PRIMARY_GUANGYANG_MAP = Object.freeze({
   width: 40,
   depth: 24,
@@ -748,7 +749,7 @@ let primaryLastRunMode = null;
 let lastPrimaryScoreClockRenderAt = 0;
 
 function getRobotProtocol() {
-  return localStorage.getItem("chenlongRobotProtocol") === "https" ? "https" : "http";
+  return localStorage.getItem("chenlongRobotProtocol") === "http" ? "http" : "https";
 }
 
 function setRobotProtocol(protocol) {
@@ -833,10 +834,11 @@ function primaryScoreSnapshot() {
 }
 
 function formatPrimaryElapsedTime(milliseconds) {
-  const tenths = Math.max(0, Math.floor(Number(milliseconds || 0) / 100));
-  const minutes = Math.floor(tenths / 600);
-  const seconds = Math.floor(tenths / 10) % 60;
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths % 10}`;
+  const ms = Math.max(0, Math.floor(Number(milliseconds || 0)));
+  const minutes = Math.floor(ms / 60000);
+  const seconds = Math.floor(ms / 1000) % 60;
+  const millis = ms % 1000;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
 }
 
 function formatPrimaryPenaltyPoints(value) {
@@ -2313,6 +2315,10 @@ async function flushBlocklyWorkspace(taskId = activeBlocklyWorkspaceTaskId()) {
     blocklySaveTimer = null;
     blocklySaveTimerTaskId = null;
   }
+  if (CHENLONG_OFFLINE) {
+    setWorkspaceSaveState("已保存到本机", "saved");
+    return true;
+  }
   const workspaceSnapshot = blocklyWorkspacePending.get(taskId)
     || readLocalBlocklyWorkspace(userId, taskId)?.workspace
     || (taskId === activeBlocklyWorkspaceTaskId() ? captureBlocklyWorkspace(taskId) : null);
@@ -2380,6 +2386,7 @@ function scheduleBlocklySave(taskId = activeBlocklyWorkspaceTaskId()) {
 }
 
 function persistBlocklyWorkspaceOnPageExit() {
+  if (CHENLONG_OFFLINE) return false;
   const taskId = blocklyWorkspaceDisplayedTaskId || activeBlocklyWorkspaceTaskId();
   const workspaceSnapshot = captureBlocklyWorkspace(taskId);
   const userId = String(primaryUser?.id || "");
@@ -2497,6 +2504,11 @@ async function restoreBlocklyWorkspaceForTask(taskId = activeBlocklyWorkspaceTas
 
 async function initializeBlocklyWorkspaces() {
   if (!primaryUser) return;
+  if (CHENLONG_OFFLINE) {
+    const taskId = activeBlocklyWorkspaceTaskId();
+    if (taskId) await restoreBlocklyWorkspaceForTask(taskId);
+    return;
+  }
   try {
     const result = await primaryRequest("/api/workspaces");
     if (result?.schemaVersion !== "chenlong.blockly-workspaces/v1"
@@ -8425,7 +8437,14 @@ async function followLineToJunction(context, baseValue, kpValue, maxCorrectionVa
           : state.phase === "waiting_for_camera" ? "画面暂时不可用，等待恢复…" : "自动巡线中…");
         else if (state?.state === "stopping") setStatus("正在确认停车…");
       },
-      onFrame: updateLaneFollowHud
+      onFrame: updateLaneFollowHud,
+      onSamplerError: error => {
+        const hint = /SecurityError|taint/i.test(error?.name || error?.message || "")
+          ? "摄像头画面跨域受限（CORS），无法读取像素"
+          : "摄像头画面采样失败";
+        setStatus(hint);
+        addLog(`循迹警告：${hint}：${error?.message || error}。`);
+      }
     });
     const result = await lane.run();
     if (result.reachedLineEnd) {
@@ -9726,7 +9745,7 @@ function targetRenderFps() {
 
 function animate(timestamp = performance.now()) {
   requestAnimationFrame(animate);
-  if (activeRun && timestamp - lastPrimaryScoreClockRenderAt >= 100) {
+  if (activeRun && timestamp - lastPrimaryScoreClockRenderAt >= 33) {
     lastPrimaryScoreClockRenderAt = timestamp;
     renderPrimaryScore();
     enforceProgramTimeLimit();
@@ -9851,6 +9870,13 @@ function validatePublishedPrimaryMap(config) {
 }
 
 async function refreshPublishedPrimaryMaps({ reloadCurrent = true } = {}) {
+  if (CHENLONG_OFFLINE) {
+    if (activeMission) {
+      activeMission.mapRevision = 0;
+      activeMission.mapDigest = "0".repeat(64);
+    }
+    return;
+  }
   const result = await primaryRequest("/api/maps");
   const expectedMapCount = Object.keys(PRIMARY_GUANGYANG_MAPS.TASKS).length;
   if (result?.schemaVersion !== "chenlong.blockly-maps/v1" || !Array.isArray(result.maps) || result.maps.length !== expectedMapCount) {
@@ -9951,6 +9977,17 @@ async function submitPrimaryAuth(mode) {
 }
 
 async function initializePrimaryAccount() {
+  if (CHENLONG_OFFLINE) {
+    primaryUser = { id: "usr_00000000000000000000000000000000", username: "决赛选手", role: "student", teamId: null };
+    [platformReturnButton, teamInviteButton, loginButton, logoutButton, adminButton].forEach(button => {
+      if (button) button.hidden = true;
+    });
+    setWorkspaceSaveState("本机保存", "saved");
+    renderPrimaryAccount();
+    await refreshPublishedPrimaryMaps();
+    await initializeBlocklyWorkspaces();
+    return;
+  }
   try {
     const result = await primaryRequest("/api/auth/me");
     if (result?.schemaVersion === "chenlong.blockly-auth/v1" && result.authenticated && result.user) primaryUser = result.user;
@@ -9973,6 +10010,10 @@ async function initializePrimaryAccount() {
 
 async function archivePrimaryRun(programCode, context) {
   if (context.runMode !== "scored") return null;
+  if (CHENLONG_OFFLINE) {
+    addLog("离线决赛版：成绩仅本地计时，不上传云端。");
+    return null;
+  }
   const target = context.target === "real" ? "real" : "sim";
   const workspaceXml = JSON.stringify(
     context.workspaceSnapshot || Blockly.serialization.workspaces.save(workspace)

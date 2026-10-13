@@ -2980,7 +2980,7 @@ body .account-actions > #teamInviteButton { display: none !important; }
   inset: 0;
   width: 100%;
   height: 100%;
-  background: #0f172a;
+  background: transparent;
   display: block;
 }
 .lane-follow-canvas[hidden] { display: none; }

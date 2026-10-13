@@ -2,6 +2,8 @@
 (function (global) {
   "use strict";
 
+  const CHENLONG_OFFLINE = global.__CHENLONG_OFFLINE__ === true;
+
   const scriptUrl = global.document?.currentScript?.src || global.document?.baseURI || global.location?.href;
   const sdkUrl = new URL("./lane/src/junction_follower.mjs", scriptUrl);
   const laneSrcDir = new URL("./lane/src/", scriptUrl).href;
@@ -10,10 +12,20 @@
     "intersection.mjs", "junction_follower.mjs", "junction_policy.mjs", "lane.mjs",
     "runtime_config.mjs", "worker.mjs"
   ];
+  // worker.mjs 及其依赖闭包，按依赖顺序（被依赖者在前）。HTTP 明文页面无法注册
+  // Service Worker，只有 HTTPS 的 SW 缓存或 HTTP 强缓存兜底，二者对 module worker
+  // 的动态加载都不够可靠。这里在预热阶段把这些模块合并成自包含的 classic worker
+  // 脚本，用 Blob URL 加载，彻底摆脱「执行巡线时断网拉取 worker.mjs」的失败。
+  const WORKER_MODULE_NAMES = [
+    "follow_config.mjs", "branch.mjs", "intersection.mjs", "crossing_stop.mjs",
+    "lane.mjs", "worker.mjs"
+  ];
+  let workerBlobUrl = null;
   let sdkPromise = null;
   let activeRun = null;
 
   function loadSdk() {
+    if (CHENLONG_OFFLINE) return Promise.resolve(global.__chenlongLaneSdk);
     if (!sdkPromise) sdkPromise = import(sdkUrl.href).catch(error => {
       sdkPromise = null;
       throw error;
@@ -21,10 +33,31 @@
     return sdkPromise;
   }
 
+  // 合并 worker.mjs 的依赖闭包，生成自包含的 classic worker 脚本。ES module 的
+  // import/export 被剥离（依赖已按顺序内联），new Worker(blobUrl) 不再需要网络。
+  async function buildWorkerBlobUrl() {
+    if (CHENLONG_OFFLINE) {
+      workerBlobUrl = URL.createObjectURL(new Blob([global.__chenlongLaneWorkerSrc], { type: "text/javascript" }));
+      return;
+    }
+    const parts = [];
+    for (const name of WORKER_MODULE_NAMES) {
+      const response = await fetch(laneSrcDir + name, { cache: "reload" });
+      if (!response.ok) throw new Error(`加载巡线 worker 模块失败：${name}（HTTP ${response.status}）`);
+      let code = await response.text();
+      code = code.replace(/^import\b[^\n]*$/gm, "").replace(/^(\s*)export\s+/gm, "$1");
+      parts.push(`/* ==== ${name} ==== */\n${code}`);
+    }
+    workerBlobUrl = URL.createObjectURL(new Blob(parts, { type: "text/javascript" }));
+  }
+
   // 页面打开时即预热全部巡线模块：逐条 fetch（顺带写入 Service Worker 缓存，断网后
   // 由 SW 兜底）+ 动态 import 主线程入口（把模块图加载进内存）。onProgress(done, total, name)
   // 用于驱动加载进度条。任一条失败不阻断整体，仅记日志。
   function preload(onProgress) {
+    if (CHENLONG_OFFLINE) {
+      return Promise.resolve().then(() => buildWorkerBlobUrl()).then(() => loadSdk()).then(() => {});
+    }
     const total = SDK_MODULE_NAMES.length;
     let loaded = 0;
     const report = () => {
@@ -34,7 +67,10 @@
     const warm = Promise.all(SDK_MODULE_NAMES.map(name =>
       fetch(laneSrcDir + name).then(report, report)
     ));
-    return warm.then(() => loadSdk()).then(() => {});
+    return warm
+      .then(() => buildWorkerBlobUrl().catch(error => { console.warn("巡线 worker 预合并失败：", error); }))
+      .then(() => loadSdk())
+      .then(() => {});
   }
 
   function notify(callback, value) {
@@ -123,7 +159,7 @@
   // Sample the already-open camera <img> on the main thread and feed normalized
   // 320x240 RGBA frames into the detection worker. Reusing the preview stream
   // avoids a second fetch (which the browser blocks as mixed content on HTTPS).
-  function startFrameSampler(cameraElement, sdk, onFrame) {
+  function startFrameSampler(cameraElement, sdk, onFrame, onError) {
     if (!cameraElement || !sdk?.supportedCameraSize) return { stop() {} };
     const { supportedCameraSize, DETECTION_WIDTH, DETECTION_HEIGHT } = sdk;
     const canvas = document.createElement("canvas");
@@ -131,6 +167,7 @@
     canvas.height = DETECTION_HEIGHT;
     const context = canvas.getContext("2d", { willReadFrequently: true });
     let stopped = false;
+    let reported = false;
     function sample() {
       if (stopped) return;
       const naturalWidth = cameraElement.naturalWidth;
@@ -151,8 +188,13 @@
         onFrame(imageData.data.buffer, naturalWidth, naturalHeight);
       } catch (error) {
         // Tainted canvas (missing CORS on the camera stream) or an undecoded
-        // frame. The follower's freshness timeout surfaces a persistent failure
-        // as "摄像头画面不可用".
+        // frame. Report once so the black screen is attributable, then let the
+        // follower's freshness timeout surface the persistent failure.
+        if (!reported) {
+          reported = true;
+          console.warn("循迹摄像头画面采样失败：", error);
+          onError?.(error);
+        }
       }
     }
     const timer = setInterval(sample, 1000 / 15);
@@ -227,6 +269,7 @@
           if (cancelled || signal?.aborted) throw cancelledError();
           follower = createJunctionFollower({
             motorBaseUrl: options.baseUrl,
+            workerUrl: workerBlobUrl,
             params,
             onState: stateChanged,
             onResult(result) {
@@ -247,7 +290,7 @@
           }
           sampling = startFrameSampler(options.cameraElement, sdk, (rgba, width, height) => {
             follower?.pushFrame(rgba, width, height);
-          });
+          }, options.onSamplerError);
           return await completion;
         } finally {
           sampling?.stop();

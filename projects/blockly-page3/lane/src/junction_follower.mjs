@@ -185,7 +185,9 @@ export function createJunctionFollower(options={}){
       if(current.state.status!=='starting')return;
       await direct({left:0,right:0});
       if(current.state.status!=='starting')return;
-      const worker=new Worker(new URL('./worker.mjs',import.meta.url),{type:'module'});
+      const worker=options.workerUrl
+        ?new Worker(options.workerUrl)
+        :new Worker(new URL('./worker.mjs',import.meta.url),{type:'module'});
       current.worker=worker;
       worker.onerror=event=>{if(active(current))void finish('failed',event.message);};
       worker.onmessage=({data:result})=>{

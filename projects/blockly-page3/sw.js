@@ -6,7 +6,7 @@
  *
  * 注意：改动 lane/src/ 下任一 .mjs 后，请递增下方 VERSION，否则浏览器会继续用旧缓存。
  */
-const VERSION = "20261013-001";
+const VERSION = "20261013-002";
 const CACHE_NAME = "chenlong-blockly-lane-" + VERSION;
 
 const LANE_MODULES = [

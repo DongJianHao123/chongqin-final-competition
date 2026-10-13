@@ -43,7 +43,7 @@
       <div class="topbar-actions" aria-label="运行控制">
         <select id="targetSelect"><option value="real">真实小车</option><option value="sim">3D 模拟器</option></select>
         <label class="robot-connection" id="robotConnection">
-          <span class="protocol-toggle" id="protocolToggle" title="小车请求协议 HTTP"><button class="protocol-btn active" data-protocol="http" type="button">HTTP</button></span>
+          <span class="protocol-toggle" id="protocolToggle" title="小车请求协议 HTTPS"><button class="protocol-btn active" data-protocol="https" type="button">HTTPS</button><button class="protocol-btn" data-protocol="http" type="button">HTTP</button></span>
           <input id="robotBaseUrl" value="192.168.4.1"><button id="applyRobotIpButton" type="button">确认</button>
           <label class="robot-speed-field" title="真实小车前进/后退速度（0-50）"><span>直行</span><input id="realMoveSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
           <label class="robot-speed-field" title="真实小车转弯速度（0-50）"><span>转弯</span><input id="realTurnSpeed" class="robot-speed-input" type="number" min="0" max="50" step="1" value="30" inputmode="numeric"></label>
@@ -190,7 +190,7 @@
                   <strong>程序执行时间</strong>
                 </div>
                 <div class="primary-score-summary">
-                  <b id="primaryScoreValue">00:00.0</b>
+                  <b id="primaryScoreValue">00:00.000</b>
                 </div>
               </header>
             </section>
@@ -386,7 +386,7 @@
   <script src="./guangyang-map-config.js?v=20261010-single-task-001"></script>
   <script src="./blockly-navigation-core.js?v=20260827-001"></script>
   <script src="./simulation-clock.js?v=20260918-penalty-log-001"></script>
-  <script src="./lane-follow.js?v=20261010-lane-sdk-001"></script>
+  <script src="./lane-follow.js?v=20261013-blob-worker-001"></script>
   <script src="./app.js?v=20261013-snapshot-edit-001"></script>
   <script>
     if ("serviceWorker" in navigator) {
