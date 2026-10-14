@@ -169,3 +169,39 @@ Blockly 增加积木代码导入/导出（JSON 文件）：index.html 工具栏�
 
 ## 2026-10-13 11:48
 修复模拟器巡线遇到路口不停车：followBlocklyLine 的循环在到达端点后 continue 会重算 roadState 选中续行道路而穿过路口。改为单次行驶到端点即停，仅命令一开始已压路口时才经 lineContinuationExit 转入直行出口；lineContinuationExit 增加 endStoppedBy 返回远端节点类型
+
+## 2026-10-13 15:45
+程序计时精确到毫秒：formatPrimaryElapsedTime 改为 MM:SS.mmm（padStart 3 位），index.html 占位 00:00.0→00:00.000，animate 渲染间隔 100ms→33ms 使毫秒位实时刷新
+
+## 2026-10-13 16:00
+HTTP 巡线黑屏：根因是摄像头 img crossorigin=anonymous 跨域 CORS 致 getImageData 污染。改：1) 覆盖层 lane-follow-canvas 背景改透明，采不到帧时露出原始画面不再黑屏；2) startFrameSampler 静默 catch 改为上报一次 onSamplerError，app.js 提示「跨域受限」
+
+## 2026-10-13 16:07
+HTTP 页面巡线黑屏修复（方案B）：把小车请求默认协议从 http 改为 https（getRobotProtocol 默认 https），并在 index.html 恢复 HTTP|HTTPS 分段按钮、默认选中 HTTPS，使 HTTP 页面也走 https://192.168.4.1 拿带 CORS 的摄像头流
+
+## 2026-10-13 16:31
+修复 HTTP 页面断网巡线加载 worker.mjs 失败：根因是 HTTP 明文非安全上下文无法注册 SW（无 Cache Storage 离线缓存）+ lane/src/*.mjs 被 serve 为 no-store（无 HTTP 缓存）；改为对 lane/src/*.mjs 单独给 public,max-age=86400 强缓存且不重写内容（server.js serveBlockly）
+
+## 2026-10-13 16:54
+HTTP 断网巡线彻底修复（Blob worker 方案）：HTTP 明文无法注册 SW 且 HTTP 强缓存对 module worker 动态加载不可靠，改为 lane-follow.js 预热阶段 fetch worker.mjs 6 个依赖源码、剥离 import/export 合并成自包含 classic worker 脚本用 Blob URL 加载；junction_follower.mjs 支持 options.workerUrl；sw.js VERSION、lane-follow.js ?v= 均已 bump
+
+## 2026-10-13 18:03
+离线决赛版单文件打包：新增 tools/build-blockly-offline.mjs，把 blockly-page3 全资源（CSS/JS/图片/巡线SDK）内联成 dist/blockly-final.html（file:// 双击即用，无登录无云端）。app.js/lane-follow.js 加 __CHENLONG_OFFLINE__ 离线守卫（已提交）。关键点：主线程巡线 SDK 需 8 个模块（junction_policy 依赖 lane/branch/intersection），junction_follower.mjs 的 import.meta.url 在 classic script 非法需替换为 undefined
+
+## 2026-10-14 09:38
+离线决赛版防作弊加固：计时基准改 performance.now()（app.js 3 处）；构建脚本引入 terser 混淆 app.js（toplevel mangle + compress，仅保留 window.getRobotLabPerformance），并对 app.js/评分/地图配置/模拟时钟 4 个脚本做 FNV-1a 完整性自校验（篡改则 window.__CHENLONG_TAMPERED__ 置位、顶部红横幅、runProgram 停用计时运行）。产出 dist/blockly-final.html 8.2MB。package.json 新增 terser devDependency。
+
+## 2026-10-14 09:44
+修复离线版完整性校验误报：根因是源文件为 Windows CRLF，浏览器 HTML 解析器会把 \r\n/\r 归一化成 \n，导致 textContent 与构建期对 CRLF 源码算出的哈希不一致。改为 escapeInlineScript 里先把换行统一成 LF 再算哈希/内联，重构建后 4 个脚本哈希与浏览器 textContent 一致。
+
+## 2026-10-14 09:55
+修复右侧日志控制台不随拖动增高：根因是 .state-panel-content 和 .robot-state 缺少 display:flex 容器，导致 #codeOutput/.robot-state/.action-log 的 flex 属性（flex:1/flex-shrink:0）全部失效，action-log 停在 height:62px 写死高度。styles.css 补上两个 flex 容器后，收起代码时拖动分隔条日志区会撑开；重打包 dist/blockly-final.html。
+
+## 2026-10-14 10:20
+打包产物加版本号：tools/build-blockly-offline.mjs 新增 VERSION_BASE/日期戳/versionDisplay/versionFileName 三函数，顶部栏左上角注入「测试版本：v0.0.1-2026/10/14」徽标，输出文件名带版本 blockly-final-v0.0.1-2026-10-14.html；重构建成功 8.2MB
+
+## 2026-10-14 10:40
+修复变量积木 is not defined：根因是运行时 new Function('"use strict"') 包裹生成代码，而内置 variables_set/controls_for/controls_forEach 生成裸赋值(x=1)在严格模式抛错。app.js 覆盖 variables_set 改 var 声明，controls_for/controls_forEach 循环变量改 var 声明
+
+## 2026-10-14 10:51
+离线包固化线上任务一地图：build-blockly-offline.mjs 用 node:sqlite 读 data/platform.sqlite 当前发布 layout 注入 window.__CHENLONG_OFFLINE_MAPS__，app.js createPrimaryGuangyangMission 离线分支优先用它构建任务，使打包版模拟器任务与线上一致（任务一 revision 26）。重构建 dist/blockly-final-v0.0.1-2026-10-14.html

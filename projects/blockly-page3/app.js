@@ -251,6 +251,11 @@ const PRIMARY_GUANGYANG_BIN_SIZE = Object.freeze({ length: 1.2, width: 0.8, wall
 function createPrimaryGuangyangMission(level, publishedMap = null) {
   const taskId = `GYI-PRIMARY-0${level}`;
   const taskDefinition = PRIMARY_GUANGYANG_MAPS.TASKS[taskId] || PRIMARY_GUANGYANG_MAPS.TASKS["GYI-PRIMARY-01"];
+  // 离线决赛版：优先用构建期固化的管理员发布地图，使打包版模拟器任务与线上一致。
+  if (CHENLONG_OFFLINE && !publishedMap) {
+    const offline = globalThis.__CHENLONG_OFFLINE_MAPS__?.[taskId];
+    if (offline?.layout) publishedMap = offline;
+  }
   const task = publishedMap?.layout
     ? { ...PRIMARY_GUANGYANG_MAPS.normalizeLayout(taskId, publishedMap.layout), checkpointLabels: taskDefinition.checkpointLabels }
     : PRIMARY_GUANGYANG_TASK_LEVELS[level] || PRIMARY_GUANGYANG_TASK_LEVELS[1];
@@ -824,8 +829,8 @@ function primaryScoreSnapshot() {
     if (activeRun?.target === "sim") {
       elapsedMs = Math.max(0, Number(activeRun.logicalElapsedMs) || 0);
     } else if (activeRun?.target === "real") {
-      // 真实小车没有逻辑时钟，用墙钟实时计时，仅供测试时查看、不入库。
-      elapsedMs = Math.max(0, Date.now() - primaryRunStartedAt);
+      // 真实小车没有逻辑时钟，用单调时钟（performance.now）实时计时，仅供测试时查看、不入库。
+      elapsedMs = Math.max(0, performance.now() - primaryRunStartedAt);
     } else {
       elapsedMs = Math.max(0, Number(primaryRunElapsedMs) || 0);
     }
@@ -1936,6 +1941,15 @@ function defineBlocks() {
       `}\n`;
   };
   defineSafeLoopGenerators();
+
+  // 「变量」积木在严格模式下不能裸赋值：内置 variables_set 生成的是 `x = 1;`，
+  // 而运行时用 `new Function("robot", '"use strict"; ...')` 包裹，赋值给未声明变量会抛
+  // `x is not defined`。这里改为带 var 声明，赋值即声明（var 函数级提升，可重复声明）。
+  Blockly.JavaScript.variables_set = block => {
+    const value = Blockly.JavaScript.valueToCode(block, "VALUE", Blockly.JavaScript.ORDER_ASSIGNMENT) || "0";
+    const variable = Blockly.JavaScript.nameDB_.getName(block.getFieldValue("VAR"), Blockly.VARIABLE_CATEGORY_NAME);
+    return `var ${variable} = ${value};\n`;
+  };
 }
 
 function defineAsyncProcedureGenerators() {
@@ -2054,7 +2068,7 @@ function defineSafeLoopGenerators() {
       `  await robot.loopInputError("计数循环的起点、终点和步长必须是有限数字，且步长不能为 0");\n` +
       `} else {\n` +
       `  let forGuard_${id} = 0;\n` +
-      `  for (${variable} = forFrom_${id}; forBy_${id} > 0 ? ${variable} <= forTo_${id} : ${variable} >= forTo_${id}; ${variable} += forBy_${id}) {\n` +
+      `  for (var ${variable} = forFrom_${id}; forBy_${id} > 0 ? ${variable} <= forTo_${id} : ${variable} >= forTo_${id}; ${variable} += forBy_${id}) {\n` +
       `    if (forGuard_${id} >= ${MAX_PROGRAM_LOOP_ITERATIONS}) { await robot.loopLimit(); break; }\n` +
       `    forGuard_${id} += 1;\n` +
       `    await robot.loopTick("计数循环", forGuard_${id});\n` +
@@ -2074,7 +2088,7 @@ function defineSafeLoopGenerators() {
     return `const forEachList_${id} = robot.requireList(${list});\n` +
       `if (forEachList_${id}.length > ${MAX_PROGRAM_LOOP_ITERATIONS}) await robot.repeatLimit(forEachList_${id}.length);\n` +
       `for (let forEachIndex_${id} = 0; forEachIndex_${id} < forEachList_${id}.length; forEachIndex_${id}++) {\n` +
-      `  ${variable} = forEachList_${id}[forEachIndex_${id}];\n` +
+      `  var ${variable} = forEachList_${id}[forEachIndex_${id}];\n` +
       `  await robot.loopTick("遍历列表", forEachIndex_${id} + 1, forEachList_${id}.length);\n` +
       (branch || `  await robot.emptyLoop("遍历列表");\n`) +
       `  if (robot.stopped()) break;\n` +
@@ -8774,6 +8788,12 @@ function pauseActiveRun() {
 
 async function runProgram(options = {}) {
   const requestedRunMode = options.runMode === "scored" ? "scored" : "debug";
+  if (requestedRunMode === "scored" && globalThis.__CHENLONG_TAMPERED__ === true) {
+    setStatus("文件校验失败");
+    addLog("文件完整性校验失败：检测到代码被修改，计时运行已停用。请使用原始分发的文件。");
+    showRuntimeFeedback("文件已被修改", "检测到代码被篡改，计时运行已停用。", { tone: "warning" });
+    return;
+  }
   const restartReason = typeof options.restartReason === "string" ? options.restartReason : null;
   const selectedRootIds = Array.isArray(options.selectedRootIds) ? options.selectedRootIds : null;
   const selectedRoots = selectedRootIds
@@ -8918,7 +8938,7 @@ async function runProgram(options = {}) {
     runToBlockId: options.runToBlockId,
     workspaceSnapshot: runWorkspaceSnapshot
   });
-  primaryRunStartedAt = Date.now();
+  primaryRunStartedAt = performance.now();
   primaryRunElapsedMs = 0;
   primaryLastRunMode = target === "sim" ? context.runMode : null;
   activeRun = context;
@@ -8985,7 +9005,7 @@ async function runProgram(options = {}) {
         finishPrimaryOffRoadPenalty("run-ended");
       }
     } else if (context.target === "real") {
-      primaryRunElapsedMs = Math.max(0, Date.now() - primaryRunStartedAt);
+      primaryRunElapsedMs = Math.max(0, performance.now() - primaryRunStartedAt);
     }
     if (context.runMode === "scored" && primaryUser && actionCount > 0
       && !["reset", "stopped", "mission-change", "code-changed"].includes(context.reason)) {

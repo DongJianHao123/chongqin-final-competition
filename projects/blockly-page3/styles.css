@@ -408,6 +408,16 @@ h1 {
   background: var(--code);
 }
 
+/* 运行状态内容区：填充 code-panel 剩余高度，并把代码输出与小车状态纵向排布。
+   缺少这个 flex 容器时，下方 #codeOutput / .robot-state 的 flex 属性不生效，
+   拖动分隔条加高面板后内容不会跟着撑开（日志控制台停在写死高度上）。 */
+.state-panel-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .vertical-splitter {
   position: relative;
   z-index: 15;
@@ -682,6 +692,8 @@ h1 {
 }
 
 .robot-state {
+  display: flex;
+  flex-direction: column;
   flex-shrink: 0;
   border-top: 1px solid #3b4656;
   padding: 8px 14px 9px;

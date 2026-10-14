@@ -9,5 +9,8 @@
     "start": "node --env-file-if-exists=.env server.js",
     "check": "node --check server.js && node --check packages/platform-store.js && node --check packages/platform-auth.js && node --check packages/blockly-api.js && node --check packages/official-sso.js && node --check tools/migrate-db.js && node --check public/platform-login.js && node --check public/platform-portal.js && node --check public/platform-admin.js",
     "migrate": "node tools/migrate-db.js"
+  },
+  "devDependencies": {
+    "terser": "^5.51.2"
   }
 }
