@@ -1203,6 +1203,15 @@ function createServer(config = {}) {
         return;
       }
 
+      // 统一规范路径：/blockly（无尾斜杠）重定向到 /blockly/，避免落入 404。
+      if (pathname === "/blockly" && ["GET", "HEAD"].includes(request.method)) {
+        response.writeHead(301, {
+          Location: "/blockly/",
+          "Cache-Control": "no-store, max-age=0"
+        });
+        response.end();
+        return;
+      }
       if (pathname === "/blockly/login.html" && ["GET", "HEAD"].includes(request.method)) {
         response.writeHead(302, {
           Location: "/login.html?returnTo=%2Fblockly%2F",
